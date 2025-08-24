@@ -8,7 +8,9 @@ import OrderDetail from './components/OrderDetail'
 import PickingSession from './components/PickingSession'
 import Dashboard from './components/Dashboard'
 import ExceptionManagement from './components/ExceptionManagement'
+import WarehouseManagement from './components/WarehouseManagement'
 import Header from './components/Header'
+import OfflineIndicator from './components/OfflineIndicator'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
@@ -21,6 +23,7 @@ function App() {
       <Router>
         <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
           <Header />
+          <OfflineIndicator />
           <Container maxWidth="md" sx={{ py: 2 }}>
             <Routes>
               <Route path="/login" element={<Login />} />
@@ -61,6 +64,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <ExceptionManagement />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/warehouses"
+                element={
+                  <ProtectedRoute>
+                    <WarehouseManagement />
                   </ProtectedRoute>
                 }
               />

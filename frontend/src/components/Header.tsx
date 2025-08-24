@@ -43,6 +43,15 @@ function Header() {
                 >
                   Excepciones
                 </Button>
+                {user.role === 'admin' && (
+                  <Button
+                    color="inherit"
+                    onClick={() => navigate('/warehouses')}
+                    size="small"
+                  >
+                    Almacenes
+                  </Button>
+                )}
               </>
             )}
             <Typography variant="body2">

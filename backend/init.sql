@@ -71,5 +71,23 @@ CREATE INDEX idx_events_type ON events(type);
 CREATE INDEX idx_exceptions_session_id ON exceptions(session_id);
 CREATE INDEX idx_exceptions_status ON exceptions(status);
 
-INSERT INTO users (email, password_hash, role) VALUES 
-('admin@picking.com', '$2b$12$e9ZunD4BIOclyG2zSeihP.Ie8prZebWBGOzZ57gju3WiDvf0DS0R6', 'admin');
+CREATE TABLE warehouses (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL,
+    code VARCHAR(50) UNIQUE NOT NULL,
+    address TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE users ADD COLUMN warehouse_id UUID REFERENCES warehouses(id);
+ALTER TABLE sessions ADD COLUMN warehouse_id UUID REFERENCES warehouses(id);
+
+CREATE INDEX idx_users_warehouse_id ON users(warehouse_id);
+CREATE INDEX idx_sessions_warehouse_id ON sessions(warehouse_id);
+
+INSERT INTO warehouses (id, name, code, address) VALUES 
+('660e8400-e29b-41d4-a716-446655440000', 'Almacén Principal', 'MAIN', 'Dirección del almacén principal');
+
+INSERT INTO users (email, password_hash, role, warehouse_id) VALUES 
+('admin@picking.com', '$2b$12$e9ZunD4BIOclyG2zSeihP.Ie8prZebWBGOzZ57gju3WiDvf0DS0R6', 'admin', '660e8400-e29b-41d4-a716-446655440000');

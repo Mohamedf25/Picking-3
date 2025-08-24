@@ -7,10 +7,22 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+class WarehouseResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    code: str
+    address: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: str
     role: str
+    warehouse_id: Optional[uuid.UUID] = None
     created_at: datetime
     updated_at: datetime
     
@@ -40,6 +52,7 @@ class OrderResponse(BaseModel):
 class SessionResponse(BaseModel):
     id: uuid.UUID
     order_id: int
+    warehouse_id: Optional[uuid.UUID] = None
     status: str
     started_at: datetime
     finished_at: Optional[datetime] = None
@@ -74,6 +87,11 @@ class ProductMetrics(BaseModel):
     error_count: int
     total_picked: int
     error_rate: float
+
+class WarehouseCreate(BaseModel):
+    name: str
+    code: str
+    address: Optional[str] = None
 
 class MetricsResponse(BaseModel):
     total_completed_orders: int

@@ -27,8 +27,10 @@ import {
   CheckCircle,
   ArrowBack,
   Upload,
+  Print,
 } from '@mui/icons-material'
 import CameraScanner from './CameraScanner'
+import QRLabel from './QRLabel'
 
 interface Session {
   id: string
@@ -41,7 +43,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 function PickingSession() {
   const { sessionId } = useParams<{ sessionId: string }>()
-  const [, setSession] = useState<Session | null>(null)
+  const [session, setSession] = useState<Session | null>(null)
   const [scanValue, setScanValue] = useState('')
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
@@ -54,6 +56,8 @@ function PickingSession() {
   const [photos, setPhotos] = useState<string[]>([])
   const [progress, setProgress] = useState(0)
   const [scannerOpen, setScannerOpen] = useState(false)
+  const [showQRLabel, setShowQRLabel] = useState(false)
+  const [qrLabelData, setQrLabelData] = useState<any>(null)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -149,13 +153,21 @@ function PickingSession() {
       await axios.post(`${API_BASE_URL}/sessions/${sessionId}/finish`, {
         notes: 'Sesión completada desde la app móvil',
       })
+      
+      try {
+        const qrResponse = await axios.get(`${API_BASE_URL}/orders/${session?.order_id}/qr-label`)
+        setQrLabelData(qrResponse.data)
+        setShowQRLabel(true)
+      } catch (qrError) {
+        console.error('Error generating QR label:', qrError)
+      }
+      
       setSuccess('Sesión finalizada correctamente')
-      setTimeout(() => navigate('/orders'), 2000)
+      setFinishDialog(false)
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Error al finalizar sesión')
     } finally {
       setFinishing(false)
-      setFinishDialog(false)
     }
   }
 
@@ -358,6 +370,40 @@ function PickingSession() {
         onScan={handleCameraScan}
         title="Escanear Código de Barras"
       />
+
+      {/* QR Label Dialog */}
+      <Dialog open={showQRLabel} onClose={() => setShowQRLabel(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ textAlign: 'center' }}>
+          <Print sx={{ mr: 1 }} />
+          Etiqueta QR Generada
+        </DialogTitle>
+        <DialogContent>
+          {qrLabelData && (
+            <QRLabel
+              orderId={qrLabelData.order_id.toString()}
+              orderNumber={qrLabelData.order_number}
+              customerName={qrLabelData.customer_name}
+              total={qrLabelData.total}
+              woocommerceUrl={qrLabelData.woocommerce_url}
+            />
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowQRLabel(false)}>
+            Cerrar
+          </Button>
+          <Button
+            onClick={() => {
+              setShowQRLabel(false)
+              setTimeout(() => navigate('/orders'), 1000)
+            }}
+            variant="contained"
+            color="primary"
+          >
+            Continuar
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

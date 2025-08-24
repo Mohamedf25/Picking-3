@@ -16,12 +16,12 @@ import requests
 from requests.auth import HTTPBasicAuth
 
 from database import get_db, engine
-from models import User, SessionModel, Line, Photo, Event, Exception
+from models import User, SessionModel, Line, Photo, Event, Exception, Warehouse
 from schemas import (
     UserLogin, Token, UserResponse, OrderResponse, SessionResponse,
     ScanRequest, PhotoResponse, FinishSessionRequest, MetricsResponse,
     PickerMetrics, ProductMetrics, CreateExceptionRequest, ExceptionResponse,
-    ApproveExceptionRequest
+    ApproveExceptionRequest, WarehouseResponse, WarehouseCreate
 )
 
 load_dotenv()
@@ -357,6 +357,33 @@ async def finish_session(
     
     return {"message": "Session completed successfully"}
 
+@app.get("/orders/{order_id}/qr-label")
+async def generate_qr_label(order_id: int, current_user: User = Depends(get_current_user)):
+    """Generate QR label data for a completed order"""
+    try:
+        orders = get_woocommerce_orders()
+        order = next((o for o in orders if o["id"] == order_id), None)
+        if not order:
+            raise HTTPException(status_code=404, detail="Pedido no encontrado")
+        
+        customer_name = f"{order.get('billing', {}).get('first_name', '')} {order.get('billing', {}).get('last_name', '')}".strip()
+        if not customer_name:
+            customer_name = "Cliente desconocido"
+        
+        qr_data = {
+            "order_id": order_id,
+            "order_number": order.get('number', str(order_id)),
+            "customer_name": customer_name,
+            "total": order.get('total', '0.00'),
+            "woocommerce_url": f"https://productosmagnate.com/pa/wp-admin/post.php?post={order_id}&action=edit",
+            "date_completed": datetime.utcnow().isoformat()
+        }
+        
+        return qr_data
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generando etiqueta QR: {str(e)}")
+
 @app.get("/metrics", response_model=MetricsResponse)
 async def get_metrics(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role not in ["admin", "supervisor"]:
@@ -596,6 +623,65 @@ async def approve_exception(
 @app.get("/")
 async def root():
     return {"message": "Picking System API"}
+
+@app.get("/warehouses", response_model=List[WarehouseResponse])
+async def get_warehouses(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role not in ["admin", "supervisor"]:
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+    
+    warehouses = db.query(Warehouse).all()
+    return warehouses
+
+@app.post("/warehouses", response_model=WarehouseResponse)
+async def create_warehouse(
+    warehouse_data: WarehouseCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Solo administradores pueden crear almacenes")
+    
+    existing = db.query(Warehouse).filter(Warehouse.code == warehouse_data.code).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Código de almacén ya existe")
+    
+    warehouse = Warehouse(
+        name=warehouse_data.name,
+        code=warehouse_data.code,
+        address=warehouse_data.address
+    )
+    
+    db.add(warehouse)
+    db.commit()
+    db.refresh(warehouse)
+    
+    return warehouse
+
+@app.put("/users/{user_id}/warehouse")
+async def assign_user_warehouse(
+    user_id: str,
+    warehouse_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Solo administradores pueden asignar almacenes")
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    
+    warehouse = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+    if not warehouse:
+        raise HTTPException(status_code=404, detail="Almacén no encontrado")
+    
+    user.warehouse_id = warehouse_id
+    db.commit()
+    
+    return {"message": "Usuario asignado al almacén correctamente"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

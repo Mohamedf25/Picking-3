@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import axios from 'axios'
+import { offlineManager } from '../utils/offlineStorage'
+import { deviceLockManager } from '../utils/deviceLock'
 
 interface User {
   id: string
@@ -13,6 +15,8 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>
   logout: () => void
   loading: boolean
+  isOffline: boolean
+  deviceId: string | null
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -23,22 +27,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isOffline, setIsOffline] = useState(!navigator.onLine)
+  const [deviceId, setDeviceId] = useState<string | null>(null)
 
   useEffect(() => {
-    const storedToken = localStorage.getItem('token')
-    if (storedToken) {
-      setToken(storedToken)
-      axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`
-      const userData = localStorage.getItem('user')
-      if (userData) {
-        setUser(JSON.parse(userData))
+    const initializeAuth = async () => {
+      const storedToken = localStorage.getItem('token')
+      if (storedToken) {
+        setToken(storedToken)
+        axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`
+        const userData = localStorage.getItem('user')
+        if (userData) {
+          const parsedUser = JSON.parse(userData)
+          setUser(parsedUser)
+          
+          const deviceIdValue = await deviceLockManager.getDeviceId()
+          setDeviceId(deviceIdValue)
+          
+          const isAuthorized = await deviceLockManager.isDeviceAuthorized(parsedUser.id)
+          if (!isAuthorized) {
+            await deviceLockManager.authorizeDevice(parsedUser.id)
+          }
+        }
+      }
+      
+      const handleOnline = () => {
+        setIsOffline(false)
+        offlineManager.syncPendingData()
+      }
+      
+      const handleOffline = () => {
+        setIsOffline(true)
+      }
+      
+      window.addEventListener('online', handleOnline)
+      window.addEventListener('offline', handleOffline)
+      
+      setLoading(false)
+      
+      return () => {
+        window.removeEventListener('online', handleOnline)
+        window.removeEventListener('offline', handleOffline)
       }
     }
-    setLoading(false)
+    
+    initializeAuth()
   }, [])
 
   const login = async (email: string, password: string) => {
     try {
+      const isDeviceValid = await deviceLockManager.validateDeviceIntegrity()
+      if (!isDeviceValid && localStorage.getItem('device_id')) {
+        console.warn('Device fingerprint changed - clearing device data')
+        deviceLockManager.clearDeviceData()
+      }
+      
       const response = await axios.post(`${API_BASE_URL}/auth/login`, {
         email,
         password,
@@ -56,7 +99,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       localStorage.setItem('user', JSON.stringify(userData))
       setUser(userData)
+      
+      const deviceIdValue = await deviceLockManager.getDeviceId()
+      setDeviceId(deviceIdValue)
+      await deviceLockManager.authorizeDevice(user.id)
+      
     } catch (error) {
+      if (offlineManager.isOffline()) {
+        throw new Error('Sin conexión - no se puede autenticar')
+      }
       throw new Error('Credenciales inválidas')
     }
   }
@@ -67,10 +118,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     delete axios.defaults.headers.common['Authorization']
     setUser(null)
     setToken(null)
+    setDeviceId(null)
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, token, login, logout, loading, isOffline, deviceId }}>
       {children}
     </AuthContext.Provider>
   )

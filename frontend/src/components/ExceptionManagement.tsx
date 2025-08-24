@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Card,
   CardContent,
@@ -12,8 +12,6 @@ import {
   TextField,
   Alert,
   List,
-  ListItem,
-  ListItemText,
   Chip,
   CircularProgress,
   FormControlLabel,
