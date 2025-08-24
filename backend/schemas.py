@@ -7,17 +7,20 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: str
     role: str
+    created_at: datetime
+    updated_at: datetime
     
     class Config:
         from_attributes = True
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    user: UserResponse
 
 class LineItem(BaseModel):
     id: int
@@ -57,3 +60,25 @@ class PhotoResponse(BaseModel):
 
 class FinishSessionRequest(BaseModel):
     notes: Optional[str] = None
+
+class PickerMetrics(BaseModel):
+    picker_email: str
+    picker_role: str
+    completed_orders: int
+    avg_picking_time_minutes: float
+    total_items_picked: int
+
+class ProductMetrics(BaseModel):
+    sku: str
+    product_name: str
+    error_count: int
+    total_picked: int
+    error_rate: float
+
+class MetricsResponse(BaseModel):
+    total_completed_orders: int
+    total_active_sessions: int
+    avg_picking_time_minutes: float
+    picker_metrics: List[PickerMetrics]
+    top_error_products: List[ProductMetrics]
+    incidents_count: int

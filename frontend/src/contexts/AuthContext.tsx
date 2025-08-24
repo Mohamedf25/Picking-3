@@ -9,6 +9,7 @@ interface User {
 
 interface AuthContextType {
   user: User | null
+  token: string | null
   login: (email: string, password: string) => Promise<void>
   logout: () => void
   loading: boolean
@@ -20,12 +21,14 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
+  const [token, setToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
+    const storedToken = localStorage.getItem('token')
+    if (storedToken) {
+      setToken(storedToken)
+      axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`
       const userData = localStorage.getItem('user')
       if (userData) {
         setUser(JSON.parse(userData))
@@ -41,11 +44,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         password,
       })
       
-      const { access_token } = response.data
+      const { access_token, user } = response.data
       localStorage.setItem('token', access_token)
+      setToken(access_token)
       axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`
       
-      const userData = { id: '1', email, role: 'picker' }
+      const userData = { id: user.id, email: user.email, role: user.role }
       localStorage.setItem('user', JSON.stringify(userData))
       setUser(userData)
     } catch (error) {
@@ -58,10 +62,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('user')
     delete axios.defaults.headers.common['Authorization']
     setUser(null)
+    setToken(null)
   }
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, token, login, logout, loading }}>
       {children}
     </AuthContext.Provider>
   )

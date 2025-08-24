@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import func, desc
 from typing import List, Optional
 import uvicorn
 from datetime import datetime, timedelta
@@ -18,7 +19,8 @@ from database import get_db, engine
 from models import User, SessionModel, Line, Photo, Event
 from schemas import (
     UserLogin, Token, UserResponse, OrderResponse, SessionResponse,
-    ScanRequest, PhotoResponse, FinishSessionRequest
+    ScanRequest, PhotoResponse, FinishSessionRequest, MetricsResponse,
+    PickerMetrics, ProductMetrics
 )
 
 load_dotenv()
@@ -134,7 +136,17 @@ async def login(user_login: UserLogin, db: Session = Depends(get_db)):
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token, 
+        "token_type": "bearer",
+        "user": UserResponse(
+            id=user.id,
+            email=user.email,
+            role=user.role,
+            created_at=user.created_at,
+            updated_at=user.updated_at
+        )
+    }
 
 @app.get("/orders", response_model=List[OrderResponse])
 async def get_orders(current_user: User = Depends(get_current_user)):
@@ -343,6 +355,99 @@ async def finish_session(
         db.commit()
     
     return {"message": "Session completed successfully"}
+
+@app.get("/metrics", response_model=MetricsResponse)
+async def get_metrics(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role not in ["admin", "supervisor"]:
+        raise HTTPException(status_code=403, detail="Access denied. Admin or supervisor role required.")
+    
+    total_completed = db.query(SessionModel).filter(SessionModel.status == "finished").count()
+    
+    total_active = db.query(SessionModel).filter(SessionModel.status == "in_progress").count()
+    
+    completed_sessions = db.query(SessionModel).filter(
+        SessionModel.status == "finished",
+        SessionModel.finished_at.isnot(None)
+    ).all()
+    
+    avg_picking_time = 0.0
+    if completed_sessions:
+        total_time = sum([
+            (session.finished_at - session.started_at).total_seconds() / 60
+            for session in completed_sessions
+        ])
+        avg_picking_time = total_time / len(completed_sessions)
+    
+    picker_stats = db.query(
+        User.email,
+        User.role,
+        func.count(SessionModel.id).label('completed_orders'),
+        func.sum(Line.picked_qty).label('total_items')
+    ).join(SessionModel, User.id == SessionModel.user_id)\
+     .join(Line, SessionModel.id == Line.session_id)\
+     .filter(SessionModel.status == "finished")\
+     .group_by(User.id, User.email, User.role).all()
+    
+    picker_metrics = []
+    for stat in picker_stats:
+        picker_sessions = db.query(SessionModel).filter(
+            SessionModel.user_id == db.query(User.id).filter(User.email == stat.email).scalar(),
+            SessionModel.status == "finished",
+            SessionModel.finished_at.isnot(None)
+        ).all()
+        
+        picker_avg_time = 0.0
+        if picker_sessions:
+            picker_total_time = sum([
+                (session.finished_at - session.started_at).total_seconds() / 60
+                for session in picker_sessions
+            ])
+            picker_avg_time = picker_total_time / len(picker_sessions)
+        
+        picker_metrics.append(PickerMetrics(
+            picker_email=stat.email,
+            picker_role=stat.role,
+            completed_orders=stat.completed_orders,
+            avg_picking_time_minutes=round(picker_avg_time, 2),
+            total_items_picked=stat.total_items or 0
+        ))
+    
+    error_products = db.query(
+        Line.sku,
+        func.count(Line.id).label('error_count'),
+        func.sum(Line.expected_qty).label('total_expected'),
+        func.sum(Line.picked_qty).label('total_picked')
+    ).filter(Line.picked_qty != Line.expected_qty)\
+     .group_by(Line.sku)\
+     .order_by(desc('error_count'))\
+     .limit(10).all()
+    
+    product_metrics = []
+    for product in error_products:
+        total_lines = db.query(func.count(Line.id)).filter(Line.sku == product.sku).scalar()
+        error_rate = (product.error_count / total_lines * 100) if total_lines > 0 else 0
+        
+        product_metrics.append(ProductMetrics(
+            sku=product.sku,
+            product_name=f"Producto {product.sku}",
+            error_count=product.error_count,
+            total_picked=product.total_picked or 0,
+            error_rate=round(error_rate, 2)
+        ))
+    
+    incidents = db.query(SessionModel).join(Line)\
+                  .filter(SessionModel.status == "finished")\
+                  .filter(Line.picked_qty < Line.expected_qty)\
+                  .distinct().count()
+    
+    return MetricsResponse(
+        total_completed_orders=total_completed,
+        total_active_sessions=total_active,
+        avg_picking_time_minutes=round(avg_picking_time, 2),
+        picker_metrics=picker_metrics,
+        top_error_products=product_metrics,
+        incidents_count=incidents
+    )
 
 @app.get("/")
 async def root():

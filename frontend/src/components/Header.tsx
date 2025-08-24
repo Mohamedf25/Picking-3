@@ -1,7 +1,7 @@
 import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Logout, ShoppingCart } from '@mui/icons-material'
+import { Logout, ShoppingCart, Dashboard } from '@mui/icons-material'
 
 function Header() {
   const { user, logout } = useAuth()
@@ -26,6 +26,16 @@ function Header() {
         </Typography>
         {user && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            {(user.role === 'admin' || user.role === 'supervisor') && (
+              <Button
+                color="inherit"
+                onClick={() => navigate('/dashboard')}
+                startIcon={<Dashboard />}
+                size="small"
+              >
+                Métricas
+              </Button>
+            )}
             <Typography variant="body2">
               {user.email} ({user.role})
             </Typography>
