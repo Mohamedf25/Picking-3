@@ -16,11 +16,12 @@ import requests
 from requests.auth import HTTPBasicAuth
 
 from database import get_db, engine
-from models import User, SessionModel, Line, Photo, Event
+from models import User, SessionModel, Line, Photo, Event, Exception
 from schemas import (
     UserLogin, Token, UserResponse, OrderResponse, SessionResponse,
     ScanRequest, PhotoResponse, FinishSessionRequest, MetricsResponse,
-    PickerMetrics, ProductMetrics
+    PickerMetrics, ProductMetrics, CreateExceptionRequest, ExceptionResponse,
+    ApproveExceptionRequest
 )
 
 load_dotenv()
@@ -448,6 +449,149 @@ async def get_metrics(current_user: User = Depends(get_current_user), db: Sessio
         top_error_products=product_metrics,
         incidents_count=incidents
     )
+
+@app.post("/sessions/{session_id}/exception", response_model=ExceptionResponse)
+async def create_exception(
+    session_id: str,
+    exception_request: CreateExceptionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only create exceptions for your own sessions")
+    
+    existing_exception = db.query(Exception).filter(
+        Exception.session_id == session_id,
+        Exception.status == "pending"
+    ).first()
+    
+    if existing_exception:
+        raise HTTPException(status_code=400, detail="There is already a pending exception for this session")
+    
+    exception = Exception(
+        session_id=session_id,
+        picker_id=current_user.id,
+        reason=exception_request.reason,
+        status="pending"
+    )
+    db.add(exception)
+    db.commit()
+    db.refresh(exception)
+    
+    event = Event(
+        session_id=session_id,
+        user_id=current_user.id,
+        type="exception_created",
+        payload={"reason": exception_request.reason}
+    )
+    db.add(event)
+    db.commit()
+    
+    return ExceptionResponse(
+        id=exception.id,
+        session_id=exception.session_id,
+        picker_id=exception.picker_id,
+        supervisor_id=exception.supervisor_id,
+        reason=exception.reason,
+        status=exception.status,
+        created_at=exception.created_at,
+        resolved_at=exception.resolved_at
+    )
+
+@app.get("/exceptions", response_model=List[ExceptionResponse])
+async def get_pending_exceptions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role not in ["admin", "supervisor"]:
+        raise HTTPException(status_code=403, detail="Access denied. Admin or supervisor role required.")
+    
+    exceptions = db.query(Exception).filter(Exception.status == "pending").all()
+    
+    return [
+        ExceptionResponse(
+            id=exception.id,
+            session_id=exception.session_id,
+            picker_id=exception.picker_id,
+            supervisor_id=exception.supervisor_id,
+            reason=exception.reason,
+            status=exception.status,
+            created_at=exception.created_at,
+            resolved_at=exception.resolved_at
+        )
+        for exception in exceptions
+    ]
+
+@app.post("/exceptions/{exception_id}/approve")
+async def approve_exception(
+    exception_id: str,
+    approve_request: ApproveExceptionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role not in ["admin", "supervisor"]:
+        raise HTTPException(status_code=403, detail="Access denied. Admin or supervisor role required.")
+    
+    exception = db.query(Exception).filter(Exception.id == exception_id).first()
+    if not exception:
+        raise HTTPException(status_code=404, detail="Exception not found")
+    
+    if exception.status != "pending":
+        raise HTTPException(status_code=400, detail="Exception has already been resolved")
+    
+    exception.status = "approved" if approve_request.approved else "rejected"
+    exception.supervisor_id = current_user.id
+    exception.resolved_at = datetime.utcnow()
+    
+    session = db.query(SessionModel).filter(SessionModel.id == exception.session_id).first()
+    
+    if approve_request.approved and session:
+        session.status = "finished"
+        session.finished_at = datetime.utcnow()
+        
+        if update_woocommerce_order_status(session.order_id, "completed"):
+            event = Event(
+                session_id=exception.session_id,
+                user_id=current_user.id,
+                type="exception_approved",
+                payload={
+                    "exception_id": str(exception.id),
+                    "approved": True,
+                    "notes": approve_request.notes,
+                    "order_status": "completed"
+                }
+            )
+        else:
+            event = Event(
+                session_id=exception.session_id,
+                user_id=current_user.id,
+                type="exception_approved",
+                payload={
+                    "exception_id": str(exception.id),
+                    "approved": True,
+                    "notes": approve_request.notes
+                }
+            )
+    else:
+        event = Event(
+            session_id=exception.session_id,
+            user_id=current_user.id,
+            type="exception_rejected",
+            payload={
+                "exception_id": str(exception.id),
+                "approved": False,
+                "notes": approve_request.notes
+            }
+        )
+    
+    db.add(event)
+    db.commit()
+    
+    return {"message": f"Exception {'approved' if approve_request.approved else 'rejected'} successfully"}
 
 @app.get("/")
 async def root():

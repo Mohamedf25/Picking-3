@@ -44,9 +44,20 @@ CREATE TABLE events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     session_id UUID NOT NULL REFERENCES sessions(id),
     user_id UUID NOT NULL REFERENCES users(id),
-    type VARCHAR(50) NOT NULL CHECK (type IN ('scan', 'photo', 'finish', 'error')),
+    type VARCHAR(50) NOT NULL CHECK (type IN ('scan', 'photo', 'finish', 'error', 'exception_created', 'exception_approved', 'exception_rejected')),
     payload JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE exceptions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id UUID NOT NULL REFERENCES sessions(id),
+    picker_id UUID NOT NULL REFERENCES users(id),
+    supervisor_id UUID REFERENCES users(id),
+    reason TEXT NOT NULL,
+    status VARCHAR(50) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP
 );
 
 CREATE INDEX idx_sessions_order_id ON sessions(order_id);
@@ -57,6 +68,8 @@ CREATE INDEX idx_lines_sku ON lines(sku);
 CREATE INDEX idx_photos_session_id ON photos(session_id);
 CREATE INDEX idx_events_session_id ON events(session_id);
 CREATE INDEX idx_events_type ON events(type);
+CREATE INDEX idx_exceptions_session_id ON exceptions(session_id);
+CREATE INDEX idx_exceptions_status ON exceptions(status);
 
 INSERT INTO users (email, password_hash, role) VALUES 
 ('admin@picking.com', '$2b$12$e9ZunD4BIOclyG2zSeihP.Ie8prZebWBGOzZ57gju3WiDvf0DS0R6', 'admin');

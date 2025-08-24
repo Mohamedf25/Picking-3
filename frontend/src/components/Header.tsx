@@ -27,14 +27,23 @@ function Header() {
         {user && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             {(user.role === 'admin' || user.role === 'supervisor') && (
-              <Button
-                color="inherit"
-                onClick={() => navigate('/dashboard')}
-                startIcon={<Dashboard />}
-                size="small"
-              >
-                Métricas
-              </Button>
+              <>
+                <Button
+                  color="inherit"
+                  onClick={() => navigate('/dashboard')}
+                  startIcon={<Dashboard />}
+                  size="small"
+                >
+                  Métricas
+                </Button>
+                <Button
+                  color="inherit"
+                  onClick={() => navigate('/exceptions')}
+                  size="small"
+                >
+                  Excepciones
+                </Button>
+              </>
             )}
             <Typography variant="body2">
               {user.email} ({user.role})

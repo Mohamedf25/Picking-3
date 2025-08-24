@@ -31,6 +31,7 @@ class SessionModel(Base):
     lines = relationship("Line", back_populates="session")
     photos = relationship("Photo", back_populates="session")
     events = relationship("Event", back_populates="session")
+    exceptions = relationship("Exception")
 
 class Line(Base):
     __tablename__ = "lines"
@@ -70,3 +71,19 @@ class Event(Base):
     
     session = relationship("SessionModel", back_populates="events")
     user = relationship("User")
+
+class Exception(Base):
+    __tablename__ = "exceptions"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id"), nullable=False)
+    picker_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    supervisor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    reason = Column(Text, nullable=False)
+    status = Column(String(50), default="pending")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    
+    session = relationship("SessionModel")
+    picker = relationship("User", foreign_keys=[picker_id])
+    supervisor = relationship("User", foreign_keys=[supervisor_id])

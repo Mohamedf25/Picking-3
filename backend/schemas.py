@@ -82,3 +82,23 @@ class MetricsResponse(BaseModel):
     picker_metrics: List[PickerMetrics]
     top_error_products: List[ProductMetrics]
     incidents_count: int
+
+class CreateExceptionRequest(BaseModel):
+    reason: str
+
+class ExceptionResponse(BaseModel):
+    id: uuid.UUID
+    session_id: uuid.UUID
+    picker_id: uuid.UUID
+    supervisor_id: Optional[uuid.UUID] = None
+    reason: str
+    status: str
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+class ApproveExceptionRequest(BaseModel):
+    approved: bool
+    notes: Optional[str] = None

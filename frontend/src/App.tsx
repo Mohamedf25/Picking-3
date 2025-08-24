@@ -7,6 +7,7 @@ import OrderList from './components/OrderList'
 import OrderDetail from './components/OrderDetail'
 import PickingSession from './components/PickingSession'
 import Dashboard from './components/Dashboard'
+import ExceptionManagement from './components/ExceptionManagement'
 import Header from './components/Header'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -52,6 +53,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <Dashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/exceptions"
+                element={
+                  <ProtectedRoute>
+                    <ExceptionManagement />
                   </ProtectedRoute>
                 }
               />
