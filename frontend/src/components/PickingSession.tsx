@@ -28,6 +28,7 @@ import {
   ArrowBack,
   Upload,
 } from '@mui/icons-material'
+import CameraScanner from './CameraScanner'
 
 interface Session {
   id: string
@@ -52,6 +53,7 @@ function PickingSession() {
   const [finishDialog, setFinishDialog] = useState(false)
   const [photos, setPhotos] = useState<string[]>([])
   const [progress, setProgress] = useState(0)
+  const [scannerOpen, setScannerOpen] = useState(false)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -76,8 +78,9 @@ function PickingSession() {
     }
   }
 
-  const handleScan = async () => {
-    if (!scanValue.trim()) return
+  const handleScan = async (sku?: string) => {
+    const skuToScan = sku || scanValue.trim()
+    if (!skuToScan) return
 
     setScanning(true)
     setError('')
@@ -85,9 +88,9 @@ function PickingSession() {
 
     try {
       await axios.post(`${API_BASE_URL}/sessions/${sessionId}/scan`, {
-        sku: scanValue.trim(),
+        sku: skuToScan,
       })
-      setSuccess(`Producto escaneado: ${scanValue}`)
+      setSuccess(`Producto escaneado: ${skuToScan}`)
       setScanValue('')
       setProgress(prev => Math.min(prev + 10, 100))
     } catch (err: any) {
@@ -95,6 +98,11 @@ function PickingSession() {
     } finally {
       setScanning(false)
     }
+  }
+
+  const handleCameraScan = (scannedCode: string) => {
+    setScannerOpen(false)
+    handleScan(scannedCode)
   }
 
   const handlePhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -217,8 +225,17 @@ function PickingSession() {
               placeholder="Escanee o ingrese el código"
             />
             <Button
+              variant="outlined"
+              onClick={() => setScannerOpen(true)}
+              disabled={scanning}
+              startIcon={<PhotoCamera />}
+              sx={{ minWidth: 100 }}
+            >
+              Cámara
+            </Button>
+            <Button
               variant="contained"
-              onClick={handleScan}
+              onClick={() => handleScan()}
               disabled={scanning || !scanValue.trim()}
               startIcon={scanning ? <CircularProgress size={20} /> : <QrCodeScanner />}
               sx={{ minWidth: 120 }}
@@ -333,6 +350,14 @@ function PickingSession() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Escáner de cámara */}
+      <CameraScanner
+        open={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onScan={handleCameraScan}
+        title="Escanear Código de Barras"
+      />
     </Box>
   )
 }
