@@ -6,6 +6,7 @@ authors = ["Devin AI <devin-ai-integration[bot]@users.noreply.github.com>"]
 
 [tool.poetry.dependencies]
 python = "^3.11"
+uvicorn = {extras = ["standard"], version = "^0.24.0"}
 fastapi = "^0.104.1"
 sqlalchemy = "^2.0.23"
 psycopg2-binary = "^2.9.9"
@@ -25,8 +26,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-start = "uvicorn main:app --host 0.0.0.0 --port 8000"
-
-[tool.poetry.group.dev.dependencies]
-
-uvicorn = {extras = ["standard"], version = "^0.24.0"}
+start = "fastapi run main.py --host 0.0.0.0 --port 8000"
