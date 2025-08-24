@@ -49,7 +49,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setToken(access_token)
       axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`
       
-      const userData = { id: user.id, email: user.email, role: user.role }
+      const userData = { 
+        id: user.id, 
+        email: user.email, 
+        role: user.role 
+      }
       localStorage.setItem('user', JSON.stringify(userData))
       setUser(userData)
     } catch (error) {
