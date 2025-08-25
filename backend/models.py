@@ -105,3 +105,12 @@ class Exception(Base):
     session = relationship("SessionModel")
     picker = relationship("User", foreign_keys=[picker_id])
     supervisor = relationship("User", foreign_keys=[supervisor_id])
+
+class SystemConfig(Base):
+    __tablename__ = "system_config"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    config_key = Column(String(255), unique=True, nullable=False)
+    config_value = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

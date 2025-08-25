@@ -89,5 +89,21 @@ CREATE INDEX idx_sessions_warehouse_id ON sessions(warehouse_id);
 INSERT INTO warehouses (id, name, code, address) VALUES 
 ('660e8400-e29b-41d4-a716-446655440000', 'Almacén Principal', 'MAIN', 'Dirección del almacén principal');
 
+CREATE TABLE system_config (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    config_key VARCHAR(255) UNIQUE NOT NULL,
+    config_value JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 INSERT INTO users (email, password_hash, role, warehouse_id) VALUES 
 ('admin@picking.com', '$2b$12$e9ZunD4BIOclyG2zSeihP.Ie8prZebWBGOzZ57gju3WiDvf0DS0R6', 'admin', '660e8400-e29b-41d4-a716-446655440000');
+
+INSERT INTO system_config (config_key, config_value) VALUES 
+('mandatory_photos', '"true"'),
+('allow_exceptions', '"true"'),
+('offline_mode', '"true"'),
+('camera_scanning', '"true"'),
+('qr_labels', '"true"'),
+('multi_warehouse', '"true"');
