@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, text
 from typing import List, Optional
 import uvicorn
 from datetime import datetime, timedelta
@@ -31,6 +31,29 @@ app = FastAPI(title="Picking System API", version="1.0.0")
 @app.get("/health")
 def health():
     return {"ok": True}
+
+@app.get("/health/detailed")
+def detailed_health(db: Session = Depends(get_db)):
+    """Detailed health check including database and admin user"""
+    try:
+        db.execute(text("SELECT 1"))
+        
+        admin_user = db.query(User).filter(User.email == "admin@picking.com").first()
+        admin_exists = admin_user is not None
+        
+        return {
+            "database": "ok",
+            "admin_user_exists": admin_exists,
+            "admin_user_role": admin_user.role if admin_user else None,
+            "timestamp": "2025-08-25T05:18:00Z"
+        }
+    except Exception as e:
+        return {
+            "database": "error",
+            "admin_user_exists": False,
+            "error": str(e),
+            "timestamp": "2025-08-25T05:18:00Z"
+        }
 
 app.add_middleware(
     CORSMiddleware,
@@ -149,20 +172,48 @@ async def startup_event():
     except ClientError as e:
         if e.response['Error']['Code'] != 'BucketAlreadyOwnedByYou':
             print(f"Error creating bucket: {e}")
+    
+    try:
+        from init_admin import ensure_admin_user
+        if ensure_admin_user():
+            print("✅ Admin user verification completed")
+        else:
+            print("❌ Admin user verification failed")
+    except Exception as e:
+        print(f"❌ Error during admin user initialization: {e}")
 
 @app.post("/auth/login", response_model=Token)
 async def login(user_login: UserLogin, db: Session = Depends(get_db)):
+    print(f"🔐 Login attempt for email: {user_login.email}")
+    
     user = db.query(User).filter(User.email == user_login.email).first()
-    if not user or not verify_password(user_login.password, user.password_hash):
+    if not user:
+        print(f"❌ User not found: {user_login.email}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    print(f"✅ User found: {user.email}, role: {user.role}")
+    
+    password_valid = verify_password(user_login.password, user.password_hash)
+    print(f"🔑 Password verification: {'✅ Valid' if password_valid else '❌ Invalid'}")
+    
+    if not password_valid:
+        print(f"❌ Password verification failed for: {user_login.email}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )
+    
+    print(f"✅ Login successful for: {user.email}")
     return {
         "access_token": access_token, 
         "token_type": "bearer",
@@ -933,6 +984,31 @@ async def create_warehouse(
     db.refresh(warehouse)
     
     return warehouse
+
+@app.post("/admin/create-emergency-admin")
+async def create_emergency_admin(db: Session = Depends(get_db)):
+    try:
+        existing_admin = db.query(User).filter(User.email == "admin@picking.com").first()
+        if existing_admin:
+            return {"message": "Admin user already exists", "status": "exists"}
+        
+        hashed_password = get_password_hash("admin123")
+        admin_user = User(
+            email="admin@picking.com",
+            password_hash=hashed_password,
+            role="admin",
+            warehouse_id="660e8400-e29b-41d4-a716-446655440000"
+        )
+        
+        db.add(admin_user)
+        db.commit()
+        
+        print("🚨 Emergency admin user created")
+        return {"message": "Emergency admin user created successfully", "status": "created"}
+        
+    except Exception as e:
+        print(f"❌ Error creating emergency admin: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating admin user: {str(e)}")
 
 @app.put("/users/{user_id}/warehouse")
 async def assign_user_warehouse(
