@@ -44,13 +44,22 @@ function Header() {
                   Excepciones
                 </Button>
                 {user.role === 'admin' && (
-                  <Button
-                    color="inherit"
-                    onClick={() => navigate('/warehouses')}
-                    size="small"
-                  >
-                    Almacenes
-                  </Button>
+                  <>
+                    <Button
+                      color="inherit"
+                      onClick={() => navigate('/admin')}
+                      size="small"
+                    >
+                      Panel Admin
+                    </Button>
+                    <Button
+                      color="inherit"
+                      onClick={() => navigate('/warehouses')}
+                      size="small"
+                    >
+                      Almacenes
+                    </Button>
+                  </>
                 )}
               </>
             )}

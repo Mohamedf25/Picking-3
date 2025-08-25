@@ -16,7 +16,7 @@ import requests
 from requests.auth import HTTPBasicAuth
 
 from database import get_db, engine
-from models import User, SessionModel, Line, Photo, Event, Exception, Warehouse
+from models import User, SessionModel, Line, Photo, Event, Exception, Warehouse, SystemConfig
 from schemas import (
     UserLogin, Token, UserResponse, OrderResponse, SessionResponse,
     ScanRequest, PhotoResponse, FinishSessionRequest, MetricsResponse,
@@ -105,6 +105,28 @@ def get_woocommerce_orders():
     except Exception as e:
         return []
 
+def get_woocommerce_product_details(product_id: int):
+    try:
+        url = f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/{product_id}"
+        auth = HTTPBasicAuth(WOOCOMMERCE_CONSUMER_KEY, WOOCOMMERCE_CONSUMER_SECRET)
+        response = requests.get(url, auth=auth)
+        response.raise_for_status()
+        product = response.json()
+        
+        image_url = None
+        if product.get('images') and len(product['images']) > 0:
+            image_url = product['images'][0].get('src')
+        
+        return {
+            'id': product.get('id'),
+            'name': product.get('name'),
+            'sku': product.get('sku'),
+            'image_url': image_url
+        }
+    except Exception as e:
+        print(f"Error fetching WooCommerce product {product_id}: {e}")
+        return None
+
 def update_woocommerce_order_status(order_id: int, status: str):
     try:
         url = f"{WOOCOMMERCE_URL}/wp-json/wc/v3/orders/{order_id}"
@@ -163,7 +185,7 @@ async def get_orders(current_user: User = Depends(get_current_user)):
                 {
                     "id": item["id"],
                     "name": item["name"],
-                    "sku": item["sku"] or "",
+                    "ean": item["sku"] or "",
                     "quantity": item["quantity"],
                     "product_id": item["product_id"]
                 }
@@ -180,22 +202,25 @@ async def get_order_detail(order_id: int, current_user: User = Depends(get_curre
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     
+    line_items_with_images = []
+    for item in order["line_items"]:
+        product_details = get_woocommerce_product_details(item["product_id"])
+        line_items_with_images.append({
+            "id": item["id"],
+            "name": item["name"],
+            "ean": item["sku"] or "",
+            "quantity": item["quantity"],
+            "product_id": item["product_id"],
+            "image_url": product_details.get('image_url') if product_details else None
+        })
+    
     return OrderResponse(
         id=order["id"],
         number=order["number"],
         status=order["status"],
         total=order["total"],
         customer_name=f"{order['billing']['first_name']} {order['billing']['last_name']}",
-        line_items=[
-            {
-                "id": item["id"],
-                "name": item["name"],
-                "sku": item["sku"] or "",
-                "quantity": item["quantity"],
-                "product_id": item["product_id"]
-            }
-            for item in order["line_items"]
-        ]
+        line_items=line_items_with_images
     )
 
 @app.post("/orders/{order_id}/start", response_model=SessionResponse)
@@ -223,10 +248,11 @@ async def start_picking_session(order_id: int, current_user: User = Depends(get_
     db.refresh(session)
     
     for item in order["line_items"]:
+        product_details = get_woocommerce_product_details(item["product_id"])
         line = Line(
             session_id=session.id,
             product_id=item["product_id"],
-            sku=item["sku"] or "",
+            ean=item["sku"] or "",
             expected_qty=item["quantity"],
             picked_qty=0,
             status="pending"
@@ -255,7 +281,7 @@ async def register_scan(
     
     line = db.query(Line).filter(
         Line.session_id == session_id,
-        Line.sku == scan_request.sku
+        Line.ean == scan_request.ean
     ).first()
     
     if not line:
@@ -274,7 +300,7 @@ async def register_scan(
             session_id=session_id,
             user_id=current_user.id,
             type="scan",
-            payload={"sku": scan_request.sku, "quantity": line.picked_qty}
+            payload={"ean": scan_request.ean, "picked_qty": line.picked_qty}
         )
         db.add(event)
         db.commit()
@@ -441,23 +467,23 @@ async def get_metrics(current_user: User = Depends(get_current_user), db: Sessio
         ))
     
     error_products = db.query(
-        Line.sku,
+        Line.ean,
         func.count(Line.id).label('error_count'),
         func.sum(Line.expected_qty).label('total_expected'),
         func.sum(Line.picked_qty).label('total_picked')
     ).filter(Line.picked_qty != Line.expected_qty)\
-     .group_by(Line.sku)\
+     .group_by(Line.ean)\
      .order_by(desc('error_count'))\
      .limit(10).all()
     
     product_metrics = []
     for product in error_products:
-        total_lines = db.query(func.count(Line.id)).filter(Line.sku == product.sku).scalar()
+        total_lines = db.query(func.count(Line.id)).filter(Line.ean == product.ean).scalar()
         error_rate = (product.error_count / total_lines * 100) if total_lines > 0 else 0
         
         product_metrics.append(ProductMetrics(
-            sku=product.sku,
-            product_name=f"Producto {product.sku}",
+            ean=product.ean,
+            product_name=f"Producto {product.ean}",
             error_count=product.error_count,
             total_picked=product.total_picked or 0,
             error_rate=round(error_rate, 2)
@@ -619,6 +645,250 @@ async def approve_exception(
     db.commit()
     
     return {"message": f"Exception {'approved' if approve_request.approved else 'rejected'} successfully"}
+
+@app.get("/sessions/{session_id}/lines")
+async def get_session_lines(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session.user_id != current_user.id and current_user.role not in ["admin", "supervisor"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    lines = db.query(Line).filter(Line.session_id == session_id).all()
+    
+    lines_with_details = []
+    for line in lines:
+        product_details = get_woocommerce_product_details(line.product_id)
+        lines_with_details.append({
+            "id": str(line.id),
+            "product_id": line.product_id,
+            "ean": line.ean,
+            "expected_qty": line.expected_qty,
+            "picked_qty": line.picked_qty,
+            "status": line.status,
+            "product_name": product_details.get('name') if product_details else f"Producto {line.ean}",
+            "image_url": product_details.get('image_url') if product_details else None
+        })
+    
+    return lines_with_details
+
+@app.get("/admin/config")
+async def get_system_config(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    config = db.query(SystemConfig).all()
+    config_dict = {}
+    for item in config:
+        import json
+        try:
+            config_dict[item.config_key] = json.loads(item.config_value)
+        except:
+            config_dict[item.config_key] = item.config_value
+    
+    return config_dict
+
+@app.put("/admin/config")
+async def update_system_config(
+    config: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    import json
+    for key, value in config.items():
+        config_item = db.query(SystemConfig).filter(SystemConfig.config_key == key).first()
+        if config_item:
+            config_item.config_value = json.dumps(value)
+        else:
+            new_config = SystemConfig(config_key=key, config_value=json.dumps(value))
+            db.add(new_config)
+    
+    db.commit()
+    return {"message": "Configuration updated successfully", "config": config}
+
+@app.get("/admin/users")
+async def get_all_users(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    users = db.query(User).all()
+    return [
+        {
+            "id": str(user.id),
+            "email": user.email,
+            "role": user.role,
+            "warehouse_id": str(user.warehouse_id) if user.warehouse_id else None,
+            "created_at": user.created_at.isoformat(),
+            "updated_at": user.updated_at.isoformat()
+        }
+        for user in users
+    ]
+
+@app.post("/admin/users")
+async def create_user(
+    user_data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    existing_user = db.query(User).filter(User.email == user_data["email"]).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already exists")
+    
+    hashed_password = get_password_hash(user_data["password"])
+    
+    warehouse_id = None
+    if user_data.get("warehouse_id"):
+        try:
+            import uuid
+            warehouse_id = uuid.UUID(user_data["warehouse_id"])
+        except ValueError:
+            pass
+    
+    new_user = User(
+        email=user_data["email"],
+        password_hash=hashed_password,
+        role=user_data["role"],
+        warehouse_id=warehouse_id
+    )
+    
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    return {
+        "id": str(new_user.id),
+        "email": new_user.email,
+        "role": new_user.role,
+        "warehouse_id": str(new_user.warehouse_id) if new_user.warehouse_id else None
+    }
+
+@app.put("/admin/users/{user_id}")
+async def update_user(
+    user_id: str,
+    user_data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if "email" in user_data:
+        user.email = user_data["email"]
+    if "role" in user_data:
+        user.role = user_data["role"]
+    if "warehouse_id" in user_data:
+        warehouse_id = None
+        if user_data["warehouse_id"]:
+            try:
+                import uuid
+                warehouse_id = uuid.UUID(user_data["warehouse_id"])
+            except ValueError:
+                pass
+        user.warehouse_id = warehouse_id
+    if "password" in user_data and user_data["password"]:
+        user.password_hash = get_password_hash(user_data["password"])
+    
+    db.commit()
+    
+    return {"message": "User updated successfully"}
+
+@app.delete("/admin/users/{user_id}")
+async def deactivate_user(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot deactivate yourself")
+    
+    db.delete(user)
+    db.commit()
+    
+    return {"message": "User deactivated successfully"}
+
+@app.get("/admin/audit/sessions")
+async def get_all_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    sessions = db.query(SessionModel).all()
+    return [
+        {
+            "id": str(session.id),
+            "order_id": session.order_id,
+            "user_id": str(session.user_id),
+            "status": session.status,
+            "started_at": session.started_at.isoformat(),
+            "finished_at": session.finished_at.isoformat() if session.finished_at else None,
+            "warehouse_id": str(session.warehouse_id) if session.warehouse_id else None
+        }
+        for session in sessions
+    ]
+
+@app.get("/admin/audit/orders")
+async def get_all_orders_audit(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    orders = get_woocommerce_orders()
+    sessions = db.query(SessionModel).all()
+    
+    orders_with_sessions = []
+    for order in orders:
+        order_sessions = [s for s in sessions if s.order_id == order["id"]]
+        orders_with_sessions.append({
+            "order_id": order["id"],
+            "order_number": order["number"],
+            "status": order["status"],
+            "total": order["total"],
+            "customer_name": f"{order['billing']['first_name']} {order['billing']['last_name']}",
+            "sessions": [
+                {
+                    "id": str(s.id),
+                    "user_id": str(s.user_id),
+                    "status": s.status,
+                    "started_at": s.started_at.isoformat(),
+                    "finished_at": s.finished_at.isoformat() if s.finished_at else None
+                }
+                for s in order_sessions
+            ]
+        })
+    
+    return orders_with_sessions
 
 @app.get("/")
 async def root():

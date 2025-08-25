@@ -31,6 +31,7 @@ import {
 } from '@mui/icons-material'
 import CameraScanner from './CameraScanner'
 import QRLabel from './QRLabel'
+import ProductLineItem from './ProductLineItem'
 
 interface Session {
   id: string
@@ -39,11 +40,23 @@ interface Session {
   started_at: string
 }
 
+interface ProductLine {
+  id: string
+  product_id: number
+  ean: string
+  expected_qty: number
+  picked_qty: number
+  status: string
+  product_name: string
+  image_url?: string
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 function PickingSession() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const [session, setSession] = useState<Session | null>(null)
+  const [productLines, setProductLines] = useState<ProductLine[]>([])
   const [scanValue, setScanValue] = useState('')
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
@@ -63,6 +76,7 @@ function PickingSession() {
   useEffect(() => {
     if (sessionId) {
       fetchSession()
+      fetchSessionLines()
     }
   }, [sessionId])
 
@@ -74,7 +88,6 @@ function PickingSession() {
         status: 'in_progress',
         started_at: new Date().toISOString(),
       })
-      setProgress(Math.random() * 100)
     } catch (err) {
       setError('Error al cargar la sesión')
     } finally {
@@ -82,21 +95,41 @@ function PickingSession() {
     }
   }
 
-  const handleScan = async (sku?: string) => {
-    const skuToScan = sku || scanValue.trim()
-    if (!skuToScan) return
+  const fetchSessionLines = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await axios.get(`${API_BASE_URL}/sessions/${sessionId}/lines`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      setProductLines(response.data)
+      
+      const totalExpected = response.data.reduce((sum: number, line: ProductLine) => sum + line.expected_qty, 0)
+      const totalPicked = response.data.reduce((sum: number, line: ProductLine) => sum + line.picked_qty, 0)
+      setProgress(totalExpected > 0 ? (totalPicked / totalExpected) * 100 : 0)
+    } catch (err) {
+      console.error('Error fetching session lines:', err)
+    }
+  }
+
+  const handleScan = async (ean?: string) => {
+    const eanToScan = ean || scanValue.trim()
+    if (!eanToScan) return
 
     setScanning(true)
     setError('')
     setSuccess('')
 
     try {
+      const token = localStorage.getItem('token')
       await axios.post(`${API_BASE_URL}/sessions/${sessionId}/scan`, {
-        sku: skuToScan,
+        ean: eanToScan,
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
       })
-      setSuccess(`Producto escaneado: ${skuToScan}`)
+      setSuccess(`Producto escaneado: ${eanToScan}`)
       setScanValue('')
-      setProgress(prev => Math.min(prev + 10, 100))
+      
+      await fetchSessionLines()
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Error al escanear producto')
     } finally {
@@ -119,6 +152,7 @@ function PickingSession() {
     try {
       const formData = new FormData()
       formData.append('file', file)
+      const token = localStorage.getItem('token')
 
       const response = await axios.post(
         `${API_BASE_URL}/sessions/${sessionId}/photo`,
@@ -126,6 +160,7 @@ function PickingSession() {
         {
           headers: {
             'Content-Type': 'multipart/form-data',
+            'Authorization': `Bearer ${token}`
           },
         }
       )
@@ -150,12 +185,17 @@ function PickingSession() {
     setError('')
 
     try {
+      const token = localStorage.getItem('token')
       await axios.post(`${API_BASE_URL}/sessions/${sessionId}/finish`, {
         notes: 'Sesión completada desde la app móvil',
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
       })
       
       try {
-        const qrResponse = await axios.get(`${API_BASE_URL}/orders/${session?.order_id}/qr-label`)
+        const qrResponse = await axios.get(`${API_BASE_URL}/orders/${session?.order_id}/qr-label`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
         setQrLabelData(qrResponse.data)
         setShowQRLabel(true)
       } catch (qrError) {
@@ -209,7 +249,7 @@ function PickingSession() {
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Typography variant="h6" gutterBottom>
-            Progreso
+            Progreso General
           </Typography>
           <LinearProgress
             variant="determinate"
@@ -217,10 +257,21 @@ function PickingSession() {
             sx={{ mb: 2, height: 8, borderRadius: 4 }}
           />
           <Typography variant="body2" color="text.secondary">
-            {Math.round(progress)}% completado
+            {Math.round(progress)}% completado ({productLines.filter(line => line.picked_qty >= line.expected_qty).length} de {productLines.length} productos)
           </Typography>
         </CardContent>
       </Card>
+
+      <Typography variant="h6" gutterBottom sx={{ mt: 3, mb: 2 }}>
+        Productos a Recoger
+      </Typography>
+      
+      {productLines.map((line) => (
+        <ProductLineItem
+          key={line.id}
+          line={line}
+        />
+      ))}
 
       <Card sx={{ mb: 3 }}>
         <CardContent>
@@ -230,11 +281,11 @@ function PickingSession() {
           <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
             <TextField
               fullWidth
-              label="SKU / Código de barras"
+              label="EAN / Código de barras"
               value={scanValue}
               onChange={(e) => setScanValue(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handleScan()}
-              placeholder="Escanee o ingrese el código"
+              placeholder="Escanee o ingrese el código EAN"
             />
             <Button
               variant="outlined"

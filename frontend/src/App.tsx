@@ -9,6 +9,7 @@ import PickingSession from './components/PickingSession'
 import Dashboard from './components/Dashboard'
 import ExceptionManagement from './components/ExceptionManagement'
 import WarehouseManagement from './components/WarehouseManagement'
+import AdminPanel from './components/AdminPanel'
 import Header from './components/Header'
 import OfflineIndicator from './components/OfflineIndicator'
 
@@ -72,6 +73,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <WarehouseManagement />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin"
+                element={
+                  <ProtectedRoute>
+                    <AdminPanel />
                   </ProtectedRoute>
                 }
               />

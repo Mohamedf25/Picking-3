@@ -57,7 +57,7 @@ class Line(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id"), nullable=False)
     product_id = Column(Integer, nullable=False)
-    sku = Column(String(255), nullable=False)
+    ean = Column(String(255), nullable=False)
     expected_qty = Column(Integer, nullable=False)
     picked_qty = Column(Integer, default=0)
     status = Column(String(50), nullable=False, default="pending")

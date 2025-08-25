@@ -24,7 +24,7 @@ CREATE TABLE lines (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     session_id UUID NOT NULL REFERENCES sessions(id),
     product_id INTEGER NOT NULL,
-    sku VARCHAR(255) NOT NULL,
+    ean VARCHAR(255) NOT NULL,
     expected_qty INTEGER NOT NULL,
     picked_qty INTEGER DEFAULT 0,
     status VARCHAR(50) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed')),
@@ -64,7 +64,7 @@ CREATE INDEX idx_sessions_order_id ON sessions(order_id);
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX idx_sessions_status ON sessions(status);
 CREATE INDEX idx_lines_session_id ON lines(session_id);
-CREATE INDEX idx_lines_sku ON lines(sku);
+CREATE INDEX idx_lines_ean ON lines(ean);
 CREATE INDEX idx_photos_session_id ON photos(session_id);
 CREATE INDEX idx_events_session_id ON events(session_id);
 CREATE INDEX idx_events_type ON events(type);

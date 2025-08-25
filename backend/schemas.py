@@ -37,9 +37,10 @@ class Token(BaseModel):
 class LineItem(BaseModel):
     id: int
     name: str
-    sku: str
+    ean: str
     quantity: int
     product_id: int
+    image_url: Optional[str] = None
 
 class OrderResponse(BaseModel):
     id: int
@@ -61,7 +62,7 @@ class SessionResponse(BaseModel):
         from_attributes = True
 
 class ScanRequest(BaseModel):
-    sku: str
+    ean: str
 
 class PhotoResponse(BaseModel):
     id: uuid.UUID
@@ -82,7 +83,7 @@ class PickerMetrics(BaseModel):
     total_items_picked: int
 
 class ProductMetrics(BaseModel):
-    sku: str
+    ean: str
     product_name: str
     error_count: int
     total_picked: int
