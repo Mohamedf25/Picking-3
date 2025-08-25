@@ -28,6 +28,10 @@ load_dotenv()
 
 app = FastAPI(title="Picking System API", version="1.0.0")
 
+@app.get("/health")
+def health():
+    return {"ok": True}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
