@@ -193,7 +193,7 @@ function PickingSession() {
       })
       
       try {
-        const qrResponse = await axios.get(`${API_BASE_URL}/orders/${session?.order_id}/qr-label`, {
+        const qrResponse = await axios.get(`${API_BASE_URL}/api/orders/${session?.order_id}/qr-label`, {
           headers: { Authorization: `Bearer ${token}` }
         })
         setQrLabelData(qrResponse.data)

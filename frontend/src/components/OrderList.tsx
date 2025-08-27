@@ -43,7 +43,12 @@ function OrderList() {
 
   const fetchOrders = async () => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/orders`)
+      const token = localStorage.getItem('token')
+      const response = await axios.get(`${API_BASE_URL}/api/orders`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      })
       setOrders(response.data)
     } catch (err) {
       setError('Error al cargar los pedidos')

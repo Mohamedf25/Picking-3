@@ -53,7 +53,7 @@ from schemas import (
     UserLogin, UserRegister, Token, UserResponse, OrderResponse, SessionResponse,
     ScanRequest, PhotoResponse, FinishSessionRequest, MetricsResponse,
     PickerMetrics, ProductMetrics, CreateExceptionRequest, ExceptionResponse,
-    ApproveExceptionRequest, WarehouseResponse, WarehouseCreate
+    ApproveExceptionRequest, WarehouseResponse, WarehouseCreate, LineItem
 )
 
 load_dotenv()
@@ -276,57 +276,7 @@ async def register(user_register: UserRegister, db: Session = Depends(get_db)):
     
     return {"message": "User created successfully", "username": new_user.username}
 
-@app.get("/orders", response_model=List[OrderResponse])
-async def get_orders(current_user: User = Depends(get_current_user)):
-    orders = get_woocommerce_orders()
-    return [
-        OrderResponse(
-            id=order["id"],
-            number=order["number"],
-            status=order["status"],
-            total=order["total"],
-            customer_name=f"{order['billing']['first_name']} {order['billing']['last_name']}",
-            line_items=[
-                {
-                    "id": item["id"],
-                    "name": item["name"],
-                    "ean": item["sku"] or "",
-                    "quantity": item["quantity"],
-                    "product_id": item["product_id"]
-                }
-                for item in order["line_items"]
-            ]
-        )
-        for order in orders
-    ]
 
-@app.get("/orders/{order_id}")
-async def get_order_detail(order_id: int, current_user: User = Depends(get_current_user)):
-    orders = get_woocommerce_orders()
-    order = next((o for o in orders if o["id"] == order_id), None)
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-    
-    line_items_with_images = []
-    for item in order["line_items"]:
-        product_details = get_woocommerce_product_details(item["product_id"])
-        line_items_with_images.append({
-            "id": item["id"],
-            "name": item["name"],
-            "ean": item["sku"] or "",
-            "quantity": item["quantity"],
-            "product_id": item["product_id"],
-            "image_url": product_details.get('image_url') if product_details else None
-        })
-    
-    return OrderResponse(
-        id=order["id"],
-        number=order["number"],
-        status=order["status"],
-        total=order["total"],
-        customer_name=f"{order['billing']['first_name']} {order['billing']['last_name']}",
-        line_items=line_items_with_images
-    )
 
 @app.post("/orders/{order_id}/start", response_model=SessionResponse)
 async def start_picking_session(order_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -488,32 +438,6 @@ async def finish_session(
     
     return {"message": "Session completed successfully"}
 
-@app.get("/orders/{order_id}/qr-label")
-async def generate_qr_label(order_id: int, current_user: User = Depends(get_current_user)):
-    """Generate QR label data for a completed order"""
-    try:
-        orders = get_woocommerce_orders()
-        order = next((o for o in orders if o["id"] == order_id), None)
-        if not order:
-            raise HTTPException(status_code=404, detail="Pedido no encontrado")
-        
-        customer_name = f"{order.get('billing', {}).get('first_name', '')} {order.get('billing', {}).get('last_name', '')}".strip()
-        if not customer_name:
-            customer_name = "Cliente desconocido"
-        
-        qr_data = {
-            "order_id": order_id,
-            "order_number": order.get('number', str(order_id)),
-            "customer_name": customer_name,
-            "total": order.get('total', '0.00'),
-            "woocommerce_url": f"https://productosmagnate.com/pa/wp-admin/post.php?post={order_id}&action=edit",
-            "date_completed": datetime.utcnow().isoformat()
-        }
-        
-        return qr_data
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generando etiqueta QR: {str(e)}")
 
 @app.get("/metrics", response_model=MetricsResponse)
 async def get_metrics(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1007,21 +931,156 @@ async def login_api(user_login: UserLogin, db: Session = Depends(get_db)):
 async def register_api(user_register: UserRegister, db: Session = Depends(get_db)):
     return await register(user_register, db)
 
-@api_router.get("/orders")
-async def get_orders_api(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return await get_orders(current_user, db)
+@api_router.get("/orders", response_model=List[OrderResponse])
+async def get_orders_api(current_user: User = Depends(get_current_user)):
+    if current_user.role not in ["admin", "supervisor", "picker"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    try:
+        orders = get_woocommerce_orders()
+        order_responses = []
+        for order in orders:
+            customer_name = f"{order.get('billing', {}).get('first_name', '')} {order.get('billing', {}).get('last_name', '')}".strip()
+            if not customer_name:
+                customer_name = "Cliente desconocido"
+            
+            line_items = []
+            for item in order.get('line_items', []):
+                line_items.append(LineItem(
+                    id=item.get('id', 0),
+                    name=item.get('name', ''),
+                    ean=item.get('sku', ''),
+                    quantity=item.get('quantity', 0),
+                    product_id=item.get('product_id', 0)
+                ))
+            
+            order_responses.append(OrderResponse(
+                id=order["id"],
+                number=order.get("number", str(order["id"])),
+                status=order.get("status", "unknown"),
+                total=order.get("total", "0.00"),
+                customer_name=customer_name,
+                line_items=line_items
+            ))
+        return order_responses
+    except Exception as e:
+        print(f"Error fetching orders: {e}")
+        return []
 
-@api_router.get("/orders/{order_id}")
-async def get_order_detail_api(order_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return await get_order_detail(order_id, current_user, db)
+@api_router.get("/orders/{order_id}", response_model=OrderResponse)
+async def get_order_detail_api(order_id: int, current_user: User = Depends(get_current_user)):
+    try:
+        orders = get_woocommerce_orders()
+        order = next((o for o in orders if o["id"] == order_id), None)
+        if not order:
+            raise HTTPException(status_code=404, detail="Pedido no encontrado")
+        
+        customer_name = f"{order.get('billing', {}).get('first_name', '')} {order.get('billing', {}).get('last_name', '')}".strip()
+        if not customer_name:
+            customer_name = "Cliente desconocido"
+        
+        line_items = []
+        for item in order.get('line_items', []):
+            product_details = get_woocommerce_product_details(item["product_id"])
+            line_items.append(LineItem(
+                id=item.get('id', 0),
+                name=item.get('name', ''),
+                ean=item.get('sku', ''),
+                quantity=item.get('quantity', 0),
+                product_id=item.get('product_id', 0)
+            ))
+        
+        return OrderResponse(
+            id=order["id"],
+            number=order.get("number", str(order["id"])),
+            status=order.get("status", "unknown"),
+            total=order.get("total", "0.00"),
+            customer_name=customer_name,
+            line_items=line_items
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching order {order_id}: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
 
-@api_router.post("/orders/{order_id}/start")
+@api_router.post("/orders/{order_id}/start", response_model=SessionResponse)
 async def start_picking_session_api(order_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return await start_picking_session(order_id, current_user, db)
+    existing_session = db.query(SessionModel).filter(
+        SessionModel.order_id == order_id,
+        SessionModel.status == "in_progress"
+    ).first()
+    
+    if existing_session:
+        raise HTTPException(status_code=400, detail="Session already in progress for this order")
+    
+    orders = get_woocommerce_orders()
+    order = next((o for o in orders if o["id"] == order_id), None)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    session = SessionModel(
+        order_id=order_id,
+        user_id=current_user.id,
+        status="in_progress"
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    
+    for item in order["line_items"]:
+        product_details = get_woocommerce_product_details(item["product_id"])
+        line = Line(
+            session_id=session.id,
+            product_id=item["product_id"],
+            ean=item["sku"] or "",
+            expected_qty=item["quantity"],
+            picked_qty=0,
+            status="pending"
+        )
+        db.add(line)
+    
+    db.commit()
+    
+    return SessionResponse(
+        id=session.id,
+        order_id=session.order_id,
+        status=session.status,
+        started_at=session.started_at
+    )
 
 @api_router.get("/health")
 async def health_api():
     return health()
+@api_router.get("/orders/{order_id}/qr-label")
+async def generate_qr_label_api(order_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Generate QR label data for a completed order"""
+    try:
+        orders = get_woocommerce_orders()
+        order = next((o for o in orders if o["id"] == order_id), None)
+        if not order:
+            raise HTTPException(status_code=404, detail="Pedido no encontrado")
+        
+        customer_name = f"{order.get('billing', {}).get('first_name', '')} {order.get('billing', {}).get('last_name', '')}".strip()
+        if not customer_name:
+            customer_name = "Cliente desconocido"
+        
+        qr_data = {
+            "order_id": order_id,
+            "order_number": order.get('number', str(order_id)),
+            "customer_name": customer_name,
+            "total": order.get('total', '0.00'),
+            "woocommerce_url": f"https://productosmagnate.com/pa/wp-admin/post.php?post={order_id}&action=edit",
+            "date_completed": datetime.utcnow().isoformat()
+        }
+        
+        return qr_data
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generando etiqueta QR: {str(e)}")
+
+
 
 @api_router.get("/health/detailed")
 async def detailed_health_api(db: Session = Depends(get_db)):
