@@ -26,6 +26,14 @@ function Header() {
         </Typography>
         {user && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Button
+              color="inherit"
+              onClick={() => navigate('/orders')}
+              startIcon={<ShoppingCart />}
+              size="small"
+            >
+              Pedidos
+            </Button>
             {(user.role === 'admin' || user.role === 'supervisor') && (
               <>
                 <Button
@@ -64,7 +72,7 @@ function Header() {
               </>
             )}
             <Typography variant="body2">
-              {user.email} ({user.role})
+              {user.username} ({user.role})
             </Typography>
             <Button
               color="inherit"

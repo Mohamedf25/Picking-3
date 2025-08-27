@@ -52,7 +52,12 @@ function OrderDetail() {
 
   const fetchOrder = async () => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/orders/${orderId}`)
+      const token = localStorage.getItem('token')
+      const response = await axios.get(`${API_BASE_URL}/api/orders/${orderId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      })
       setOrder(response.data)
     } catch (err) {
       setError('Error al cargar el pedido')
@@ -66,7 +71,12 @@ function OrderDetail() {
     
     setStartingSession(true)
     try {
-      const response = await axios.post(`${API_BASE_URL}/orders/${orderId}/start`)
+      const token = localStorage.getItem('token')
+      const response = await axios.post(`${API_BASE_URL}/api/orders/${orderId}/start`, {}, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      })
       navigate(`/sessions/${response.data.id}`)
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Error al iniciar la sesión de picking')

@@ -2,9 +2,9 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    email VARCHAR(255) UNIQUE NOT NULL,
+    username VARCHAR(64) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
-    role VARCHAR(50) NOT NULL CHECK (role IN ('picker', 'supervisor', 'admin')),
+    role VARCHAR(50) NOT NULL DEFAULT 'picker' CHECK (role IN ('picker', 'supervisor', 'admin')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -97,8 +97,8 @@ CREATE TABLE system_config (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT INTO users (email, password_hash, role, warehouse_id) VALUES 
-('admin@picking.com', '$2b$12$e9ZunD4BIOclyG2zSeihP.Ie8prZebWBGOzZ57gju3WiDvf0DS0R6', 'admin', '660e8400-e29b-41d4-a716-446655440000');
+INSERT INTO users (username, password_hash, role, warehouse_id) VALUES 
+('admin', '$2b$12$e9ZunD4BIOclyG2zSeihP.Ie8prZebWBGOzZ57gju3WiDvf0DS0R6', 'admin', '660e8400-e29b-41d4-a716-446655440000');
 
 INSERT INTO system_config (config_key, config_value) VALUES 
 ('mandatory_photos', '"true"'),
