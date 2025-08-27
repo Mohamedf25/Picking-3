@@ -64,7 +64,7 @@ function Header() {
               </>
             )}
             <Typography variant="body2">
-              {user.email} ({user.role})
+              {user.username} ({user.role})
             </Typography>
             <Button
               color="inherit"

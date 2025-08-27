@@ -23,7 +23,7 @@ def ensure_admin_user():
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         db = SessionLocal()
         
-        admin_user = db.query(User).filter(User.email == "admin@picking.com").first()
+        admin_user = db.query(User).filter(User.username == "admin").first()
         
         if admin_user:
             logger.info("Admin user already exists")
@@ -31,7 +31,7 @@ def ensure_admin_user():
             
         hashed_password = get_password_hash("admin123")
         admin_user = User(
-            email="admin@picking.com",
+            username="admin",
             password_hash=hashed_password,
             role="admin",
             warehouse_id="660e8400-e29b-41d4-a716-446655440000"

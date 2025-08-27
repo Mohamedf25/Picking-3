@@ -18,7 +18,7 @@ from requests.auth import HTTPBasicAuth
 from database import get_db, engine
 from models import User, SessionModel, Line, Photo, Event, Exception, Warehouse, SystemConfig
 from schemas import (
-    UserLogin, Token, UserResponse, OrderResponse, SessionResponse,
+    UserLogin, UserRegister, Token, UserResponse, OrderResponse, SessionResponse,
     ScanRequest, PhotoResponse, FinishSessionRequest, MetricsResponse,
     PickerMetrics, ProductMetrics, CreateExceptionRequest, ExceptionResponse,
     ApproveExceptionRequest, WarehouseResponse, WarehouseCreate
@@ -38,7 +38,7 @@ def detailed_health(db: Session = Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
         
-        admin_user = db.query(User).filter(User.email == "admin@picking.com").first()
+        admin_user = db.query(User).filter(User.username == "admin").first()
         admin_exists = admin_user is not None
         
         return {
@@ -68,7 +68,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 10080))
 
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
@@ -110,13 +110,13 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     )
     try:
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
+        username: str = payload.get("sub")
+        if username is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
     
-    user = db.query(User).filter(User.email == email).first()
+    user = db.query(User).filter(User.username == username).first()
     if user is None:
         raise credentials_exception
     return user
@@ -184,47 +184,67 @@ async def startup_event():
 
 @app.post("/auth/login", response_model=Token)
 async def login(user_login: UserLogin, db: Session = Depends(get_db)):
-    print(f"🔐 Login attempt for email: {user_login.email}")
+    print(f"🔐 Login attempt for username: {user_login.username}")
     
-    user = db.query(User).filter(User.email == user_login.email).first()
+    user = db.query(User).filter(User.username == user_login.username).first()
     if not user:
-        print(f"❌ User not found: {user_login.email}")
+        print(f"❌ User not found: {user_login.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    print(f"✅ User found: {user.email}, role: {user.role}")
+    print(f"✅ User found: {user.username}, role: {user.role}")
     
     password_valid = verify_password(user_login.password, user.password_hash)
     print(f"🔑 Password verification: {'✅ Valid' if password_valid else '❌ Invalid'}")
     
     if not password_valid:
-        print(f"❌ Password verification failed for: {user_login.email}")
+        print(f"❌ Password verification failed for: {user_login.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
+        data={"sub": user.username}, expires_delta=access_token_expires
     )
     
-    print(f"✅ Login successful for: {user.email}")
+    print(f"✅ Login successful for: {user.username}")
     return {
         "access_token": access_token, 
         "token_type": "bearer",
         "user": UserResponse(
             id=user.id,
-            email=user.email,
+            username=user.username,
             role=user.role,
+            warehouse_id=user.warehouse_id,
             created_at=user.created_at,
             updated_at=user.updated_at
         )
     }
+
+@app.post("/auth/register")
+async def register(user_register: UserRegister, db: Session = Depends(get_db)):
+    existing_user = db.query(User).filter(User.username == user_register.username).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    
+    hashed_password = get_password_hash(user_register.password)
+    new_user = User(
+        username=user_register.username,
+        password_hash=hashed_password,
+        role=user_register.role
+    )
+    
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    return {"message": "User created successfully", "username": new_user.username}
 
 @app.get("/orders", response_model=List[OrderResponse])
 async def get_orders(current_user: User = Depends(get_current_user)):
@@ -488,19 +508,19 @@ async def get_metrics(current_user: User = Depends(get_current_user), db: Sessio
         avg_picking_time = total_time / len(completed_sessions)
     
     picker_stats = db.query(
-        User.email,
+        User.username,
         User.role,
         func.count(SessionModel.id).label('completed_orders'),
         func.sum(Line.picked_qty).label('total_items')
     ).join(SessionModel, User.id == SessionModel.user_id)\
      .join(Line, SessionModel.id == Line.session_id)\
      .filter(SessionModel.status == "finished")\
-     .group_by(User.id, User.email, User.role).all()
+     .group_by(User.id, User.username, User.role).all()
     
     picker_metrics = []
     for stat in picker_stats:
         picker_sessions = db.query(SessionModel).filter(
-            SessionModel.user_id == db.query(User.id).filter(User.email == stat.email).scalar(),
+            SessionModel.user_id == db.query(User.id).filter(User.username == stat.username).scalar(),
             SessionModel.status == "finished",
             SessionModel.finished_at.isnot(None)
         ).all()
@@ -514,7 +534,7 @@ async def get_metrics(current_user: User = Depends(get_current_user), db: Sessio
             picker_avg_time = picker_total_time / len(picker_sessions)
         
         picker_metrics.append(PickerMetrics(
-            picker_email=stat.email,
+            picker_username=stat.username,
             picker_role=stat.role,
             completed_orders=stat.completed_orders,
             avg_picking_time_minutes=round(picker_avg_time, 2),
@@ -784,7 +804,7 @@ async def get_all_users(
     return [
         {
             "id": str(user.id),
-            "email": user.email,
+            "username": user.username,
             "role": user.role,
             "warehouse_id": str(user.warehouse_id) if user.warehouse_id else None,
             "created_at": user.created_at.isoformat(),
@@ -802,9 +822,9 @@ async def create_user(
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     
-    existing_user = db.query(User).filter(User.email == user_data["email"]).first()
+    existing_user = db.query(User).filter(User.username == user_data["username"]).first()
     if existing_user:
-        raise HTTPException(status_code=400, detail="Email already exists")
+        raise HTTPException(status_code=400, detail="Username already exists")
     
     hashed_password = get_password_hash(user_data["password"])
     
@@ -829,7 +849,7 @@ async def create_user(
     
     return {
         "id": str(new_user.id),
-        "email": new_user.email,
+        "username": new_user.username,
         "role": new_user.role,
         "warehouse_id": str(new_user.warehouse_id) if new_user.warehouse_id else None
     }
@@ -848,8 +868,8 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    if "email" in user_data:
-        user.email = user_data["email"]
+    if "username" in user_data:
+        user.username = user_data["username"]
     if "role" in user_data:
         user.role = user_data["role"]
     if "warehouse_id" in user_data:
@@ -988,13 +1008,13 @@ async def create_warehouse(
 @app.post("/admin/create-emergency-admin")
 async def create_emergency_admin(db: Session = Depends(get_db)):
     try:
-        existing_admin = db.query(User).filter(User.email == "admin@picking.com").first()
+        existing_admin = db.query(User).filter(User.username == "admin").first()
         if existing_admin:
             return {"message": "Admin user already exists", "status": "exists"}
         
         hashed_password = get_password_hash("admin123")
         admin_user = User(
-            email="admin@picking.com",
+            username="admin",
             password_hash=hashed_password,
             role="admin",
             warehouse_id="660e8400-e29b-41d4-a716-446655440000"

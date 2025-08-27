@@ -43,7 +43,7 @@ import { useAuth } from '../contexts/AuthContext'
 
 interface User {
   id: string
-  email: string
+  username: string
   role: string
   warehouse_id?: string
   created_at: string
@@ -91,7 +91,7 @@ function AdminPanel() {
   const [userDialog, setUserDialog] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [newUser, setNewUser] = useState({
-    email: '',
+    username: '',
     password: '',
     role: 'picker',
     warehouse_id: ''
@@ -152,7 +152,7 @@ function AdminPanel() {
       await axios.post(`${API_BASE_URL}/admin/users`, newUser, getAuthHeaders())
       setSuccess('Usuario creado exitosamente')
       setUserDialog(false)
-      setNewUser({ email: '', password: '', role: 'picker', warehouse_id: '' })
+      setNewUser({ username: '', password: '', role: 'picker', warehouse_id: '' })
       fetchUsers()
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Error al crear usuario')
@@ -170,7 +170,7 @@ function AdminPanel() {
       setSuccess('Usuario actualizado exitosamente')
       setUserDialog(false)
       setEditingUser(null)
-      setNewUser({ email: '', password: '', role: 'picker', warehouse_id: '' })
+      setNewUser({ username: '', password: '', role: 'picker', warehouse_id: '' })
       fetchUsers()
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Error al actualizar usuario')
@@ -206,14 +206,14 @@ function AdminPanel() {
     if (user) {
       setEditingUser(user)
       setNewUser({
-        email: user.email,
+        username: user.username,
         password: '',
         role: user.role,
         warehouse_id: user.warehouse_id || ''
       })
     } else {
       setEditingUser(null)
-      setNewUser({ email: '', password: '', role: 'picker', warehouse_id: '' })
+      setNewUser({ username: '', password: '', role: 'picker', warehouse_id: '' })
     }
     setUserDialog(true)
   }
@@ -271,7 +271,7 @@ function AdminPanel() {
               <Table>
                 <TableHead>
                   <TableRow>
-                    <TableCell>Email</TableCell>
+                    <TableCell>Usuario</TableCell>
                     <TableCell>Rol</TableCell>
                     <TableCell>Almacén</TableCell>
                     <TableCell>Creado</TableCell>
@@ -281,7 +281,7 @@ function AdminPanel() {
                 <TableBody>
                   {users.map((user) => (
                     <TableRow key={user.id}>
-                      <TableCell>{user.email}</TableCell>
+                      <TableCell>{user.username}</TableCell>
                       <TableCell>
                         <Chip 
                           label={user.role} 
@@ -498,9 +498,9 @@ function AdminPanel() {
         <DialogContent>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
             <TextField
-              label="Email"
-              value={newUser.email}
-              onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+              label="Usuario"
+              value={newUser.username}
+              onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
               fullWidth
             />
             

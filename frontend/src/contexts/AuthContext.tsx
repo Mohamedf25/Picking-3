@@ -5,14 +5,14 @@ import { deviceLockManager } from '../utils/deviceLock'
 
 interface User {
   id: string
-  email: string
+  username: string
   role: string
 }
 
 interface AuthContextType {
   user: User | null
   token: string | null
-  login: (email: string, password: string) => Promise<void>
+  login: (username: string, password: string) => Promise<void>
   logout: () => void
   loading: boolean
   isOffline: boolean
@@ -74,7 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initializeAuth()
   }, [])
 
-  const login = async (email: string, password: string) => {
+  const login = async (username: string, password: string) => {
     try {
       const isDeviceValid = await deviceLockManager.validateDeviceIntegrity()
       if (!isDeviceValid && localStorage.getItem('device_id')) {
@@ -83,7 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       
       const response = await axios.post(`${API_BASE_URL}/auth/login`, {
-        email,
+        username,
         password,
       })
       
@@ -94,7 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       const userData = { 
         id: user.id, 
-        email: user.email, 
+        username: user.username, 
         role: user.role
       }
       localStorage.setItem('user', JSON.stringify(userData))

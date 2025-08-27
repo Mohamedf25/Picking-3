@@ -1,11 +1,16 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import uuid
 
 class UserLogin(BaseModel):
-    email: EmailStr
+    username: str
     password: str
+
+class UserRegister(BaseModel):
+    username: str = Field(min_length=3, max_length=32, pattern=r'^[A-Za-z0-9._-]+$')
+    password: str = Field(min_length=6)
+    role: str = "picker"
 
 class WarehouseResponse(BaseModel):
     id: uuid.UUID
@@ -20,7 +25,7 @@ class WarehouseResponse(BaseModel):
 
 class UserResponse(BaseModel):
     id: uuid.UUID
-    email: str
+    username: str
     role: str
     warehouse_id: Optional[uuid.UUID] = None
     created_at: datetime
@@ -76,7 +81,7 @@ class FinishSessionRequest(BaseModel):
     notes: Optional[str] = None
 
 class PickerMetrics(BaseModel):
-    picker_email: str
+    picker_username: str
     picker_role: str
     completed_orders: int
     avg_picking_time_minutes: float

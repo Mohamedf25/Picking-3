@@ -14,7 +14,7 @@ import { useNavigate } from 'react-router-dom'
 import { Login as LoginIcon } from '@mui/icons-material'
 
 function Login() {
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -27,7 +27,7 @@ function Login() {
     setLoading(true)
 
     try {
-      await login(email, password)
+      await login(username, password)
       navigate('/orders')
     } catch (err) {
       setError('Credenciales inválidas')
@@ -66,10 +66,10 @@ function Login() {
           <form onSubmit={handleSubmit}>
             <TextField
               fullWidth
-              label="Email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              label="Usuario"
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               margin="normal"
               required
               autoFocus
@@ -100,7 +100,7 @@ function Login() {
               Usuario de prueba:
             </Typography>
             <Typography variant="body2">
-              Email: admin@picking.com<br />
+              Usuario: admin<br />
               Contraseña: admin123
             </Typography>
           </Box>

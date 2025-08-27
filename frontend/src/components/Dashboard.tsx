@@ -27,7 +27,7 @@ import {
 import { useAuth } from '../contexts/AuthContext'
 
 interface PickerMetrics {
-  picker_email: string
+  picker_username: string
   picker_role: string
   completed_orders: number
   avg_picking_time_minutes: number
@@ -228,7 +228,7 @@ function Dashboard() {
                         <TableCell>
                           <Box>
                             <Typography variant="body2" fontWeight="bold">
-                              {picker.picker_email}
+                              {picker.picker_username}
                             </Typography>
                             <Chip 
                               label={picker.picker_role} 
