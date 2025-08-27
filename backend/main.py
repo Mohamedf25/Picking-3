@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, text
 from typing import List, Optional
@@ -15,7 +16,38 @@ from dotenv import load_dotenv
 import requests
 from requests.auth import HTTPBasicAuth
 
-from database import get_db, engine
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from models import Base
+
+if os.path.exists("/app/frontend/dist"):
+    SQLITE_DATABASE_URL = "sqlite:///./picking.db"
+    engine = create_engine(SQLITE_DATABASE_URL, connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    
+    def get_db():
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+else:
+    try:
+        from database import get_db, engine
+    except Exception:
+        SQLITE_DATABASE_URL = "sqlite:///./picking.db"
+        engine = create_engine(SQLITE_DATABASE_URL, connect_args={"check_same_thread": False})
+        Base.metadata.create_all(bind=engine)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        
+        def get_db():
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
 from models import User, SessionModel, Line, Photo, Event, Exception, Warehouse, SystemConfig
 from schemas import (
     UserLogin, UserRegister, Token, UserResponse, OrderResponse, SessionResponse,
@@ -167,11 +199,7 @@ def update_woocommerce_order_status(order_id: int, status: str):
 
 @app.on_event("startup")
 async def startup_event():
-    try:
-        s3_client.create_bucket(Bucket=MINIO_BUCKET_NAME)
-    except ClientError as e:
-        if e.response['Error']['Code'] != 'BucketAlreadyOwnedByYou':
-            print(f"Error creating bucket: {e}")
+    print("⚠️ MinIO initialization skipped (standalone mode)")
     
     try:
         from init_admin import ensure_admin_user
@@ -179,7 +207,9 @@ async def startup_event():
             print("✅ Admin user verification completed")
         else:
             print("❌ Admin user verification failed")
-    except Exception as e:
+    except ImportError:
+        print("⚠️ Admin initialization module not found")
+    except BaseException as e:
         print(f"❌ Error during admin user initialization: {e}")
 
 @app.post("/auth/login", response_model=Token)
@@ -965,9 +995,39 @@ async def get_all_orders_audit(
     
     return orders_with_sessions
 
-@app.get("/")
-async def root():
-    return {"message": "Picking System API"}
+from fastapi import APIRouter
+
+api_router = APIRouter(prefix="/api")
+
+@api_router.post("/auth/login")
+async def login_api(user_login: UserLogin, db: Session = Depends(get_db)):
+    return await login(user_login, db)
+
+@api_router.post("/auth/register") 
+async def register_api(user_register: UserRegister, db: Session = Depends(get_db)):
+    return await register(user_register, db)
+
+@api_router.get("/orders")
+async def get_orders_api(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return await get_orders(current_user, db)
+
+@api_router.get("/orders/{order_id}")
+async def get_order_detail_api(order_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return await get_order_detail(order_id, current_user, db)
+
+@api_router.post("/orders/{order_id}/start")
+async def start_picking_session_api(order_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return await start_picking_session(order_id, current_user, db)
+
+@api_router.get("/health")
+async def health_api():
+    return health()
+
+@api_router.get("/health/detailed")
+async def detailed_health_api(db: Session = Depends(get_db)):
+    return detailed_health(db)
+
+app.include_router(api_router)
 
 @app.get("/warehouses", response_model=List[WarehouseResponse])
 async def get_warehouses(
@@ -1052,6 +1112,11 @@ async def assign_user_warehouse(
     db.commit()
     
     return {"message": "Usuario asignado al almacén correctamente"}
+
+if os.path.exists("/app/frontend/dist"):
+    if os.path.exists("/app/frontend/dist/assets"):
+        app.mount("/assets", StaticFiles(directory="/app/frontend/dist/assets"), name="assets")
+    app.mount("/", StaticFiles(directory="/app/frontend/dist", html=True), name="frontend")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
