@@ -70,8 +70,10 @@ function OrderList() {
       }
       
       const response = await axios.get(`${storeUrl}/wp-json/picking/v1/pickinglist`, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+        },
         params: {
-          token: apiKey,
           appuser: pickerName
         }
       })
@@ -149,8 +151,10 @@ function OrderList() {
         `${storeUrl}/wp-json/picking/v1/create-batch`,
         { order_ids: selectedOrders },
         {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`
+          },
           params: {
-            token: apiKey,
             appuser: pickerName
           }
         }

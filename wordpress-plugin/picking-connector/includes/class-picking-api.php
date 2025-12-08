@@ -148,6 +148,13 @@ class Picking_API {
         $token = $request->get_param('token');
         
         if (empty($token)) {
+            $auth = $request->get_header('Authorization');
+            if ($auth && preg_match('/Bearer\s+(.+)/i', $auth, $m)) {
+                $token = trim($m[1]);
+            }
+        }
+        
+        if (empty($token)) {
             $token = $request->get_header('X-Picking-Token');
         }
         
@@ -1094,6 +1101,13 @@ class Picking_API {
     
     public function handle_connection($request) {
         $token = $request->get_param('token');
+        
+        if (empty($token)) {
+            $auth = $request->get_header('Authorization');
+            if ($auth && preg_match('/Bearer\s+(.+)/i', $auth, $m)) {
+                $token = trim($m[1]);
+            }
+        }
         
         if (empty($token)) {
             $token = $request->get_header('X-Picking-Token');
