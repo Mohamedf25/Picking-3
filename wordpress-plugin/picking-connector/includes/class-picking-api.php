@@ -121,6 +121,27 @@ class Picking_API {
             'callback' => array($this, 'handle_connection'),
             'permission_callback' => '__return_true',
         ));
+        
+        register_rest_route($namespace, '/debug-auth', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'debug_auth'),
+            'permission_callback' => '__return_true',
+        ));
+    }
+    
+    public function debug_auth($request) {
+        $token_param = $request->get_param('token');
+        $pk_key_param = $request->get_param('pk_key');
+        $header_token = $request->get_header('X-Picking-Token');
+        $stored = get_option('picking_api_key', '');
+        
+        return array(
+            'token_param_prefix' => $token_param ? substr($token_param, 0, 8) : null,
+            'pk_key_param_prefix' => $pk_key_param ? substr($pk_key_param, 0, 8) : null,
+            'header_token_prefix' => $header_token ? substr($header_token, 0, 8) : null,
+            'stored_prefix' => $stored ? substr($stored, 0, 8) : null,
+            'all_headers' => array_keys($request->get_headers()),
+        );
     }
     
     private function validate_token($request) {

@@ -49,8 +49,8 @@ function StoreConfig({ onConnected }: StoreConfigProps) {
       }
 
       const response = await axios.get(`${url}/wp-json/picking/v1/connect`, {
-        headers: {
-          'X-Picking-Token': apiKey.trim()
+        params: {
+          token: apiKey.trim()
         }
       })
 
