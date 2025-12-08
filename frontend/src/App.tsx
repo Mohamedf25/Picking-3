@@ -2,7 +2,6 @@ import React, { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Container } from '@mui/material'
 import { AuthProvider } from './contexts/AuthContext'
-import Login from './components/Login'
 import StoreConfig from './components/StoreConfig'
 import OrderList from './components/OrderList'
 import OrderDetail from './components/OrderDetail'
@@ -48,7 +47,7 @@ function AppContent(){
         <OfflineIndicator />
         <Container maxWidth="md" sx={{ py: 2 }}>
           <Routes>
-            <Route path="/login" element={<Login />} />
+            <Route path="/login" element={<Navigate to="/orders" />} />
             <Route path="/connect" element={<StoreConfig onConnected={handleConnected} />} />
             <Route
               path="/orders"
