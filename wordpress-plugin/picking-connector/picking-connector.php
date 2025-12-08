@@ -82,16 +82,14 @@ class Picking_Connector {
     }
     
     public function add_cors_support() {
-        remove_filter('rest_pre_serve_request', 'rest_send_cors_headers');
+        add_filter('rest_allowed_cors_headers', function($headers) {
+            $headers[] = 'X-Picking-Token';
+            return array_values(array_unique($headers));
+        });
+        
         add_filter('rest_pre_serve_request', function($value) {
-            $origin = get_http_origin();
-            
             header('Access-Control-Allow-Origin: *');
             header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
-            header('Access-Control-Allow-Credentials: true');
-            header('Access-Control-Allow-Headers: Authorization, Content-Type, X-Picking-Token, X-WP-Nonce');
-            header('Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages');
-            
             return $value;
         });
     }
