@@ -32,6 +32,13 @@ class Picking_API {
             'permission_callback' => '__return_true',
         ));
         
+        // Alias route for /pickinglist to bypass WAF blocking
+        register_rest_route($namespace, '/orders-list', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_picking_list'),
+            'permission_callback' => '__return_true',
+        ));
+        
         register_rest_route($namespace, '/update-order-products', array(
             'methods' => 'POST',
             'callback' => array($this, 'update_order_products'),
@@ -133,13 +140,22 @@ class Picking_API {
         $token_param = $request->get_param('token');
         $pk_key_param = $request->get_param('pk_key');
         $header_token = $request->get_header('X-Picking-Token');
+        $auth_header = $request->get_header('Authorization');
+        $bearer_token = null;
+        if ($auth_header && preg_match('/Bearer\s+(.+)/i', $auth_header, $m)) {
+            $bearer_token = trim($m[1]);
+        }
         $stored = get_option('picking_api_key', '');
         
         return array(
+            'plugin_version' => '1.8',
             'token_param_prefix' => $token_param ? substr($token_param, 0, 8) : null,
             'pk_key_param_prefix' => $pk_key_param ? substr($pk_key_param, 0, 8) : null,
             'header_token_prefix' => $header_token ? substr($header_token, 0, 8) : null,
+            'bearer_token_prefix' => $bearer_token ? substr($bearer_token, 0, 8) : null,
+            'auth_header_raw' => $auth_header ? substr($auth_header, 0, 20) : null,
             'stored_prefix' => $stored ? substr($stored, 0, 8) : null,
+            'validate_result' => $this->validate_token($request),
             'all_headers' => array_keys($request->get_headers()),
         );
     }
@@ -380,6 +396,17 @@ class Picking_API {
     }
     
     public function get_picking_list($request) {
+        // TEMP DEBUG: If debug_bypass param is set, return debug info instead of checking auth
+        if ($request->get_param('debug_bypass') === 'v18') {
+            return array(
+                'debug' => 'pickinglist handler reached',
+                'plugin_version' => '1.8',
+                'validate_result' => $this->validate_token($request),
+                'token_param' => $request->get_param('token') ? substr($request->get_param('token'), 0, 8) : null,
+                'params' => array_keys($request->get_params()),
+            );
+        }
+        
         if (!$this->validate_token($request)) {
             return $this->unauthorized_response();
         }
