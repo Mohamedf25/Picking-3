@@ -125,6 +125,11 @@ class Picking_API {
     
     private function validate_token($request) {
         $token = $request->get_param('token');
+        
+        if (empty($token)) {
+            $token = $request->get_header('X-Picking-Token');
+        }
+        
         $api_key = get_option('picking_api_key', '');
         
         if (empty($token) || $token !== $api_key) {

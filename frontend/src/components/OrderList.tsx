@@ -71,8 +71,10 @@ function OrderList() {
       
       const response = await axios.get(`${storeUrl}/wp-json/picking/v1/pickinglist`, {
         params: {
-          token: apiKey,
           appuser: pickerName
+        },
+        headers: {
+          'X-Picking-Token': apiKey
         }
       })
       
@@ -150,8 +152,10 @@ function OrderList() {
         { order_ids: selectedOrders },
         {
           params: {
-            token: apiKey,
             appuser: pickerName
+          },
+          headers: {
+            'X-Picking-Token': apiKey
           }
         }
       )

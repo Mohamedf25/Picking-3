@@ -229,8 +229,12 @@ class Picking_Admin {
             wp_send_json_error(array('message' => __('No hay API Key configurada.', 'picking-connector')));
         }
         
-        $url = get_rest_url(null, 'picking/v1/get-settings') . '?token=' . $api_key;
-        $response = wp_remote_get($url);
+        $url = get_rest_url(null, 'picking/v1/get-settings');
+        $response = wp_remote_get($url, array(
+            'headers' => array(
+                'X-Picking-Token' => $api_key,
+            ),
+        ));
         
         if (is_wp_error($response)) {
             wp_send_json_error(array('message' => $response->get_error_message()));
