@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Container } from '@mui/material'
-import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { AuthProvider } from './contexts/AuthContext'
 import Login from './components/Login'
 import StoreConfig from './components/StoreConfig'
 import OrderList from './components/OrderList'
@@ -15,14 +15,13 @@ import Header from './components/Header'
 import OfflineIndicator from './components/OfflineIndicator'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth()
   const isConnected = localStorage.getItem('connected') === 'true'
   
   if (!isConnected) {
     return <Navigate to="/connect" />
   }
   
-  return user ? <>{children}</> : <Navigate to="/login" />
+  return <>{children}</>
 }
 
 function AppContent(){

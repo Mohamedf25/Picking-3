@@ -30,23 +30,18 @@ import {
 } from '@mui/icons-material'
 
 interface Order {
-  id: number
-  number: string
+  order_id: number
+  order_number: string
   status: string
   total: string
   customer_name: string
-  line_items: Array<{
-    id: number
-    name: string
-    sku: string
-    quantity: number
-    product_id: number
-  }>
+  item_count: number
+  picking_status: string
+  user_claimed: string
+  date_created: string
 }
 
 type PickingMode = 'single' | 'batch'
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 function OrderList() {
   const [orders, setOrders] = useState<Order[]>([])
@@ -64,13 +59,24 @@ function OrderList() {
 
   const fetchOrders = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await axios.get(`${API_BASE_URL}/api/orders`, {
-        headers: {
-          Authorization: `Bearer ${token}`
+      const storeUrl = localStorage.getItem('store_url')
+      const apiKey = localStorage.getItem('api_key')
+      const pickerName = localStorage.getItem('picker_name')
+      
+      if (!storeUrl || !apiKey) {
+        setError('No hay conexion con la tienda')
+        setLoading(false)
+        return
+      }
+      
+      const response = await axios.get(`${storeUrl}/wp-json/picking/v1/pickinglist`, {
+        params: {
+          token: apiKey,
+          appuser: pickerName
         }
       })
-      setOrders(response.data)
+      
+      setOrders(response.data.orders || [])
     } catch (err) {
       setError('Error al cargar los pedidos')
     } finally {
@@ -123,7 +129,7 @@ function OrderList() {
     if (selectedOrders.length === orders.length) {
       setSelectedOrders([])
     } else {
-      setSelectedOrders(orders.map(o => o.id))
+      setSelectedOrders(orders.map(o => o.order_id))
     }
   }
 
@@ -135,17 +141,27 @@ function OrderList() {
     }
     
     try {
-      const token = localStorage.getItem('token')
+      const storeUrl = localStorage.getItem('store_url')
+      const apiKey = localStorage.getItem('api_key')
+      const pickerName = localStorage.getItem('picker_name')
+      
       const response = await axios.post(
-        `${API_BASE_URL}/api/batch-picking`,
+        `${storeUrl}/wp-json/picking/v1/create-batch`,
         { order_ids: selectedOrders },
         {
-          headers: {
-            Authorization: `Bearer ${token}`
+          params: {
+            token: apiKey,
+            appuser: pickerName
           }
         }
       )
-      navigate(`/sessions/${response.data.session_id}`)
+      
+      if (response.data.success) {
+        navigate(`/orders/${selectedOrders[0]}`)
+      } else {
+        setSnackbarMessage('Error al iniciar picking por lotes')
+        setSnackbarOpen(true)
+      }
     } catch (err) {
       setSnackbarMessage('Error al iniciar picking por lotes')
       setSnackbarOpen(true)
@@ -154,8 +170,8 @@ function OrderList() {
 
   const getTotalProducts = () => {
     return orders
-      .filter(o => selectedOrders.includes(o.id))
-      .reduce((sum, o) => sum + o.line_items.length, 0)
+      .filter(o => selectedOrders.includes(o.order_id))
+      .reduce((sum, o) => sum + o.item_count, 0)
   }
 
   if (loading) {
@@ -233,20 +249,20 @@ function OrderList() {
       ) : (
         <Grid container spacing={2}>
           {orders.map((order) => (
-            <Grid item xs={12} key={order.id}>
+            <Grid item xs={12} key={order.order_id}>
               <Card 
                 sx={{ 
                   cursor: 'pointer',
-                  border: pickingMode === 'batch' && selectedOrders.includes(order.id) 
+                  border: pickingMode === 'batch' && selectedOrders.includes(order.order_id) 
                     ? '2px solid #1e3a5f' 
                     : '2px solid transparent',
                   transition: 'border-color 0.2s',
                 }} 
                 onClick={() => {
                   if (pickingMode === 'batch') {
-                    handleOrderSelect(order.id)
+                    handleOrderSelect(order.order_id)
                   } else {
-                    navigate(`/orders/${order.id}`)
+                    navigate(`/orders/${order.order_id}`)
                   }
                 }}
               >
@@ -255,15 +271,15 @@ function OrderList() {
                     <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
                       {pickingMode === 'batch' && (
                         <Checkbox
-                          checked={selectedOrders.includes(order.id)}
-                          onChange={() => handleOrderSelect(order.id)}
+                          checked={selectedOrders.includes(order.order_id)}
+                          onChange={() => handleOrderSelect(order.order_id)}
                           onClick={(e) => e.stopPropagation()}
                           sx={{ mt: -0.5, ml: -1 }}
                         />
                       )}
                       <Box>
                         <Typography variant="h6" component="h2">
-                          Pedido #{order.number}
+                          Pedido #{order.order_number}
                         </Typography>
                         <Box sx={{ display: 'flex', alignItems: 'center', mt: 1, mb: 1 }}>
                           <Person sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
@@ -287,7 +303,7 @@ function OrderList() {
                   </Box>
 
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    {order.line_items.length} producto{order.line_items.length !== 1 ? 's' : ''}
+                    {order.item_count} producto{order.item_count !== 1 ? 's' : ''}
                   </Typography>
 
                   {pickingMode === 'single' && (
@@ -296,7 +312,7 @@ function OrderList() {
                       fullWidth
                       onClick={(e) => {
                         e.stopPropagation()
-                        navigate(`/orders/${order.id}`)
+                        navigate(`/orders/${order.order_id}`)
                       }}
                       sx={{ bgcolor: '#1e3a5f', '&:hover': { bgcolor: '#2d4a6f' } }}
                     >
