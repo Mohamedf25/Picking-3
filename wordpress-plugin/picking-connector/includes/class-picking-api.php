@@ -1093,7 +1093,11 @@ class Picking_API {
     }
     
     public function handle_connection($request) {
-        $token = $request->get_header('X-Picking-Token');
+        $token = $request->get_param('token');
+        
+        if (empty($token)) {
+            $token = $request->get_header('X-Picking-Token');
+        }
         
         if (empty($token)) {
             $body = $request->get_body();
