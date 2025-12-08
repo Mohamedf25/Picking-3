@@ -1,8 +1,9 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Container } from '@mui/material'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Login from './components/Login'
+import StoreConfig from './components/StoreConfig'
 import OrderList from './components/OrderList'
 import OrderDetail from './components/OrderDetail'
 import PickingSession from './components/PickingSession'
@@ -15,81 +16,110 @@ import OfflineIndicator from './components/OfflineIndicator'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
+  const isConnected = localStorage.getItem('connected') === 'true'
+  
+  if (!isConnected) {
+    return <Navigate to="/connect" />
+  }
+  
   return user ? <>{children}</> : <Navigate to="/login" />
+}
+
+function AppContent(){
+  const [isConnected, setIsConnected] = useState(localStorage.getItem('connected') === 'true')
+
+  const handleConnected = () => {
+    setIsConnected(true)
+  }
+
+  if (!isConnected) {
+    return (
+      <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
+        <Container maxWidth="md" sx={{ py: 2 }}>
+          <StoreConfig onConnected={handleConnected} />
+        </Container>
+      </div>
+    )
+  }
+
+  return (
+    <AuthProvider>
+      <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
+        <Header />
+        <OfflineIndicator />
+        <Container maxWidth="md" sx={{ py: 2 }}>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/connect" element={<StoreConfig onConnected={handleConnected} />} />
+            <Route
+              path="/orders"
+              element={
+                <ProtectedRoute>
+                  <OrderList />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/orders/:orderId"
+              element={
+                <ProtectedRoute>
+                  <OrderDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/sessions/:sessionId"
+              element={
+                <ProtectedRoute>
+                  <PickingSession />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/exceptions"
+              element={
+                <ProtectedRoute>
+                  <ExceptionManagement />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/warehouses"
+              element={
+                <ProtectedRoute>
+                  <WarehouseManagement />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                <ProtectedRoute>
+                  <AdminPanel />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/" element={<Navigate to="/orders" />} />
+          </Routes>
+        </Container>
+      </div>
+    </AuthProvider>
+  )
 }
 
 function App() {
   return (
-    <AuthProvider>
-      <Router>
-        <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
-          <Header />
-          <OfflineIndicator />
-          <Container maxWidth="md" sx={{ py: 2 }}>
-            <Routes>
-              <Route path="/login" element={<Login />} />
-              <Route
-                path="/orders"
-                element={
-                  <ProtectedRoute>
-                    <OrderList />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/orders/:orderId"
-                element={
-                  <ProtectedRoute>
-                    <OrderDetail />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/sessions/:sessionId"
-                element={
-                  <ProtectedRoute>
-                    <PickingSession />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/dashboard"
-                element={
-                  <ProtectedRoute>
-                    <Dashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/exceptions"
-                element={
-                  <ProtectedRoute>
-                    <ExceptionManagement />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/warehouses"
-                element={
-                  <ProtectedRoute>
-                    <WarehouseManagement />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/admin"
-                element={
-                  <ProtectedRoute>
-                    <AdminPanel />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="/" element={<Navigate to="/orders" />} />
-            </Routes>
-          </Container>
-        </div>
-      </Router>
-    </AuthProvider>
+    <Router>
+      <AppContent />
+    </Router>
   )
 }
 
