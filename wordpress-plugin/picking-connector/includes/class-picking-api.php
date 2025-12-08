@@ -117,7 +117,7 @@ class Picking_API {
         ));
         
         register_rest_route($namespace, '/connect', array(
-            'methods' => 'POST',
+            'methods' => array('GET', 'POST', 'OPTIONS'),
             'callback' => array($this, 'handle_connection'),
             'permission_callback' => '__return_true',
         ));
@@ -1067,30 +1067,38 @@ class Picking_API {
     }
     
     public function handle_connection($request) {
-        $body = $request->get_body();
-        $data = json_decode($body, true);
+        $token = $request->get_header('X-Picking-Token');
         
-        $connection_code = isset($data['connection_code']) ? $data['connection_code'] : '';
-        
-        if (empty($connection_code)) {
-            return new WP_Error('missing_code', __('Codigo de conexion requerido.', 'picking-connector'), array('status' => 400));
+        if (empty($token)) {
+            $body = $request->get_body();
+            $data = json_decode($body, true);
+            
+            $connection_code = isset($data['connection_code']) ? $data['connection_code'] : '';
+            
+            if (!empty($connection_code)) {
+                $decoded = json_decode(base64_decode($connection_code), true);
+                if ($decoded && isset($decoded['api_key'])) {
+                    $token = $decoded['api_key'];
+                }
+            }
         }
         
-        $decoded = json_decode(base64_decode($connection_code), true);
-        
-        if (!$decoded || !isset($decoded['api_key'])) {
-            return new WP_Error('invalid_code', __('Codigo de conexion invalido.', 'picking-connector'), array('status' => 400));
+        if (empty($token)) {
+            return new WP_Error('missing_token', __('Token de API requerido.', 'picking-connector'), array('status' => 400));
         }
         
         $api_key = get_option('picking_api_key', '');
         
-        if ($decoded['api_key'] !== $api_key) {
+        if ($token !== $api_key) {
             return new WP_Error('invalid_key', __('API Key invalida.', 'picking-connector'), array('status' => 401));
         }
         
         return array(
             'success' => true,
-            'config' => $this->get_config($request),
+            'store_name' => get_bloginfo('name'),
+            'store_url' => get_site_url(),
+            'rest_url' => get_rest_url(null, 'picking/v1'),
+            'version' => PICKING_VERSION,
         );
     }
 }

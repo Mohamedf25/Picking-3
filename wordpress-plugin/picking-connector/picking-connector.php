@@ -69,6 +69,7 @@ class Picking_Connector {
         
         $api = new Picking_API();
         $this->loader->add_action('rest_api_init', $api, 'register_routes');
+        $this->loader->add_action('rest_api_init', $this, 'add_cors_support');
         $this->loader->add_action('plugins_loaded', $this, 'load_textdomain');
     }
     
@@ -78,6 +79,21 @@ class Picking_Connector {
     
     public function load_textdomain() {
         load_plugin_textdomain('picking-connector', false, dirname(PICKING_PLUGIN_BASENAME) . '/languages');
+    }
+    
+    public function add_cors_support() {
+        remove_filter('rest_pre_serve_request', 'rest_send_cors_headers');
+        add_filter('rest_pre_serve_request', function($value) {
+            $origin = get_http_origin();
+            
+            header('Access-Control-Allow-Origin: *');
+            header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
+            header('Access-Control-Allow-Credentials: true');
+            header('Access-Control-Allow-Headers: Authorization, Content-Type, X-Picking-Token, X-WP-Nonce');
+            header('Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages');
+            
+            return $value;
+        });
     }
     
     public function filter_query_args($wp_query_args, $query_vars) {
