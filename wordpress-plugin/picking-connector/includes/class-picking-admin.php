@@ -447,4 +447,179 @@ class Picking_Admin {
         </div>
         <?php
     }
+    
+    /**
+     * AJAX: Add new user
+     */
+    public function ajax_add_user() {
+        check_ajax_referer('picking_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => __('No tienes permisos.', 'picking-connector')));
+        }
+        
+        $user_name = isset($_POST['user_name']) ? sanitize_text_field($_POST['user_name']) : '';
+        $user_pin = isset($_POST['user_pin']) ? sanitize_text_field($_POST['user_pin']) : '';
+        $user_role = isset($_POST['user_role']) ? sanitize_text_field($_POST['user_role']) : 'picker';
+        
+        if (empty($user_name) || empty($user_pin)) {
+            wp_send_json_error(array('message' => __('Nombre y PIN son requeridos.', 'picking-connector')));
+        }
+        
+        if (!preg_match('/^[0-9]{4}$/', $user_pin)) {
+            wp_send_json_error(array('message' => __('El PIN debe ser de 4 digitos.', 'picking-connector')));
+        }
+        
+        $valid_roles = array('admin', 'supervisor', 'picker');
+        if (!in_array($user_role, $valid_roles)) {
+            $user_role = 'picker';
+        }
+        
+        $users = get_option('picking_registered_users', array());
+        
+        // Check if user already exists
+        foreach ($users as $user) {
+            if (strtolower($user['name']) === strtolower($user_name)) {
+                wp_send_json_error(array('message' => __('Ya existe un usuario con ese nombre.', 'picking-connector')));
+            }
+        }
+        
+        $user_id = wp_generate_uuid4();
+        $users[$user_id] = array(
+            'name' => $user_name,
+            'pin' => wp_hash_password($user_pin),
+            'role' => $user_role,
+            'active' => true,
+            'orders_completed' => 0,
+            'last_activity' => null,
+            'created_at' => current_time('mysql'),
+        );
+        
+        update_option('picking_registered_users', $users);
+        
+        wp_send_json_success(array('message' => __('Usuario agregado correctamente.', 'picking-connector')));
+    }
+    
+    /**
+     * AJAX: Get user data
+     */
+    public function ajax_get_user() {
+        check_ajax_referer('picking_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => __('No tienes permisos.', 'picking-connector')));
+        }
+        
+        $user_id = isset($_POST['user_id']) ? sanitize_text_field($_POST['user_id']) : '';
+        $users = get_option('picking_registered_users', array());
+        
+        if (!isset($users[$user_id])) {
+            wp_send_json_error(array('message' => __('Usuario no encontrado.', 'picking-connector')));
+        }
+        
+        wp_send_json_success(array(
+            'name' => $users[$user_id]['name'],
+            'role' => $users[$user_id]['role'],
+            'active' => $users[$user_id]['active'],
+        ));
+    }
+    
+    /**
+     * AJAX: Update user
+     */
+    public function ajax_update_user() {
+        check_ajax_referer('picking_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => __('No tienes permisos.', 'picking-connector')));
+        }
+        
+        $user_id = isset($_POST['user_id']) ? sanitize_text_field($_POST['user_id']) : '';
+        $user_name = isset($_POST['user_name']) ? sanitize_text_field($_POST['user_name']) : '';
+        $user_pin = isset($_POST['user_pin']) ? sanitize_text_field($_POST['user_pin']) : '';
+        $user_role = isset($_POST['user_role']) ? sanitize_text_field($_POST['user_role']) : 'picker';
+        
+        $users = get_option('picking_registered_users', array());
+        
+        if (!isset($users[$user_id])) {
+            wp_send_json_error(array('message' => __('Usuario no encontrado.', 'picking-connector')));
+        }
+        
+        if (empty($user_name)) {
+            wp_send_json_error(array('message' => __('El nombre es requerido.', 'picking-connector')));
+        }
+        
+        // Check if name is taken by another user
+        foreach ($users as $id => $user) {
+            if ($id !== $user_id && strtolower($user['name']) === strtolower($user_name)) {
+                wp_send_json_error(array('message' => __('Ya existe un usuario con ese nombre.', 'picking-connector')));
+            }
+        }
+        
+        $valid_roles = array('admin', 'supervisor', 'picker');
+        if (!in_array($user_role, $valid_roles)) {
+            $user_role = 'picker';
+        }
+        
+        $users[$user_id]['name'] = $user_name;
+        $users[$user_id]['role'] = $user_role;
+        
+        // Update PIN only if provided
+        if (!empty($user_pin)) {
+            if (!preg_match('/^[0-9]{4}$/', $user_pin)) {
+                wp_send_json_error(array('message' => __('El PIN debe ser de 4 digitos.', 'picking-connector')));
+            }
+            $users[$user_id]['pin'] = wp_hash_password($user_pin);
+        }
+        
+        update_option('picking_registered_users', $users);
+        
+        wp_send_json_success(array('message' => __('Usuario actualizado correctamente.', 'picking-connector')));
+    }
+    
+    /**
+     * AJAX: Toggle user active status
+     */
+    public function ajax_toggle_user() {
+        check_ajax_referer('picking_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => __('No tienes permisos.', 'picking-connector')));
+        }
+        
+        $user_id = isset($_POST['user_id']) ? sanitize_text_field($_POST['user_id']) : '';
+        $users = get_option('picking_registered_users', array());
+        
+        if (!isset($users[$user_id])) {
+            wp_send_json_error(array('message' => __('Usuario no encontrado.', 'picking-connector')));
+        }
+        
+        $users[$user_id]['active'] = !$users[$user_id]['active'];
+        update_option('picking_registered_users', $users);
+        
+        wp_send_json_success(array('message' => __('Estado actualizado.', 'picking-connector')));
+    }
+    
+    /**
+     * AJAX: Delete user
+     */
+    public function ajax_delete_user() {
+        check_ajax_referer('picking_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => __('No tienes permisos.', 'picking-connector')));
+        }
+        
+        $user_id = isset($_POST['user_id']) ? sanitize_text_field($_POST['user_id']) : '';
+        $users = get_option('picking_registered_users', array());
+        
+        if (!isset($users[$user_id])) {
+            wp_send_json_error(array('message' => __('Usuario no encontrado.', 'picking-connector')));
+        }
+        
+        unset($users[$user_id]);
+        update_option('picking_registered_users', $users);
+        
+        wp_send_json_success(array('message' => __('Usuario eliminado.', 'picking-connector')));
+    }
 }

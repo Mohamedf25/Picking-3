@@ -18,6 +18,14 @@
             $(document).on('click', '.picking-copy-btn', this.copyToClipboard);
             $(document).on('submit', '#picking-settings-form', this.saveSettings);
             $(document).on('change', 'input[name="scanner_type"]', this.updateScannerSelection);
+            
+            // User management events
+            $(document).on('submit', '#picking-add-user-form', this.addUser);
+            $(document).on('click', '.picking-edit-user', this.openEditModal);
+            $(document).on('click', '.picking-toggle-user', this.toggleUser);
+            $(document).on('click', '.picking-delete-user', this.deleteUser);
+            $(document).on('submit', '#picking-edit-user-form', this.updateUser);
+            $(document).on('click', '.picking-modal-close, .picking-modal-cancel', this.closeModal);
         },
 
         initTabs: function() {
@@ -247,6 +255,189 @@
                         light: '#ffffff'
                     }
                 });
+            }
+        },
+        
+        // User Management Functions
+        addUser: function(e) {
+            e.preventDefault();
+            
+            var $form = $(this);
+            var $button = $form.find('button[type="submit"]');
+            var originalText = $button.html();
+            
+            $button.prop('disabled', true).html('<span class="dashicons dashicons-update spinning"></span> Agregando...');
+            
+            $.ajax({
+                url: pickingAdmin.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'picking_add_user',
+                    nonce: pickingAdmin.nonce,
+                    user_name: $('#new_user_name').val(),
+                    user_pin: $('#new_user_pin').val(),
+                    user_role: $('#new_user_role').val()
+                },
+                success: function(response) {
+                    if (response.success) {
+                        PickingAdmin.showUserMessage('success', response.data.message);
+                        setTimeout(function() {
+                            location.reload();
+                        }, 1000);
+                    } else {
+                        PickingAdmin.showUserMessage('error', response.data.message);
+                    }
+                },
+                error: function() {
+                    PickingAdmin.showUserMessage('error', 'Error de conexion');
+                },
+                complete: function() {
+                    $button.prop('disabled', false).html(originalText);
+                }
+            });
+        },
+        
+        openEditModal: function(e) {
+            e.preventDefault();
+            
+            var userId = $(this).data('user-id');
+            var $modal = $('#picking-edit-user-modal');
+            
+            $.ajax({
+                url: pickingAdmin.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'picking_get_user',
+                    nonce: pickingAdmin.nonce,
+                    user_id: userId
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $('#edit_user_id').val(userId);
+                        $('#edit_user_name').val(response.data.name);
+                        $('#edit_user_role').val(response.data.role);
+                        $('#edit_user_pin').val('');
+                        $modal.show();
+                    } else {
+                        alert(response.data.message);
+                    }
+                },
+                error: function() {
+                    alert('Error de conexion');
+                }
+            });
+        },
+        
+        updateUser: function(e) {
+            e.preventDefault();
+            
+            var $form = $(this);
+            var $button = $form.find('button[type="submit"]');
+            var originalText = $button.html();
+            
+            $button.prop('disabled', true).html('<span class="dashicons dashicons-update spinning"></span> Guardando...');
+            
+            $.ajax({
+                url: pickingAdmin.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'picking_update_user',
+                    nonce: pickingAdmin.nonce,
+                    user_id: $('#edit_user_id').val(),
+                    user_name: $('#edit_user_name').val(),
+                    user_pin: $('#edit_user_pin').val(),
+                    user_role: $('#edit_user_role').val()
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $('#picking-edit-user-modal').hide();
+                        location.reload();
+                    } else {
+                        alert(response.data.message);
+                    }
+                },
+                error: function() {
+                    alert('Error de conexion');
+                },
+                complete: function() {
+                    $button.prop('disabled', false).html(originalText);
+                }
+            });
+        },
+        
+        toggleUser: function(e) {
+            e.preventDefault();
+            
+            var $button = $(this);
+            var userId = $button.data('user-id');
+            
+            $.ajax({
+                url: pickingAdmin.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'picking_toggle_user',
+                    nonce: pickingAdmin.nonce,
+                    user_id: userId
+                },
+                success: function(response) {
+                    if (response.success) {
+                        location.reload();
+                    } else {
+                        alert(response.data.message);
+                    }
+                },
+                error: function() {
+                    alert('Error de conexion');
+                }
+            });
+        },
+        
+        deleteUser: function(e) {
+            e.preventDefault();
+            
+            if (!confirm('Esta seguro de que desea eliminar este usuario?')) {
+                return;
+            }
+            
+            var $button = $(this);
+            var userId = $button.data('user-id');
+            
+            $.ajax({
+                url: pickingAdmin.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'picking_delete_user',
+                    nonce: pickingAdmin.nonce,
+                    user_id: userId
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $button.closest('tr').fadeOut(function() {
+                            $(this).remove();
+                        });
+                    } else {
+                        alert(response.data.message);
+                    }
+                },
+                error: function() {
+                    alert('Error de conexion');
+                }
+            });
+        },
+        
+        closeModal: function(e) {
+            e.preventDefault();
+            $('#picking-edit-user-modal').hide();
+        },
+        
+        showUserMessage: function(type, message) {
+            var $msg = $('#picking-user-message');
+            $msg.removeClass('success error').addClass(type).text(message).show();
+            
+            if (type === 'success') {
+                setTimeout(function() {
+                    $msg.fadeOut();
+                }, 3000);
             }
         }
     };

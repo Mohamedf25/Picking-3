@@ -67,6 +67,13 @@ class Picking_Connector {
         $this->loader->add_action('wp_ajax_picking_test_connection', $admin, 'ajax_test_connection');
         $this->loader->add_action('wp_ajax_picking_reset_order_data', $admin, 'ajax_reset_order_data');
         
+        // User management AJAX actions
+        $this->loader->add_action('wp_ajax_picking_add_user', $admin, 'ajax_add_user');
+        $this->loader->add_action('wp_ajax_picking_get_user', $admin, 'ajax_get_user');
+        $this->loader->add_action('wp_ajax_picking_update_user', $admin, 'ajax_update_user');
+        $this->loader->add_action('wp_ajax_picking_toggle_user', $admin, 'ajax_toggle_user');
+        $this->loader->add_action('wp_ajax_picking_delete_user', $admin, 'ajax_delete_user');
+        
         $api = new Picking_API();
         $this->loader->add_action('rest_api_init', $api, 'register_routes');
         $this->loader->add_action('rest_api_init', $this, 'add_cors_support');

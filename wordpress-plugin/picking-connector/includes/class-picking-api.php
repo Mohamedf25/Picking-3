@@ -134,6 +134,25 @@ class Picking_API {
             'callback' => array($this, 'debug_auth'),
             'permission_callback' => '__return_true',
         ));
+        
+        // User authentication endpoints
+        register_rest_route($namespace, '/user-login', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'user_login'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/get-users', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_users'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/get-dashboard-stats', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_dashboard_stats'),
+            'permission_callback' => '__return_true',
+        ));
     }
     
     public function debug_auth($request) {
@@ -396,11 +415,13 @@ class Picking_API {
     }
     
     public function get_picking_list($request) {
+        $debug_step = $request->get_param('debug_step');
+        
         // TEMP DEBUG: If debug_bypass param is set, return debug info instead of checking auth
         if ($request->get_param('debug_bypass') === 'v18') {
             return array(
                 'debug' => 'pickinglist handler reached',
-                'plugin_version' => '1.8',
+                'plugin_version' => '1.9',
                 'validate_result' => $this->validate_token($request),
                 'token_param' => $request->get_param('token') ? substr($request->get_param('token'), 0, 8) : null,
                 'params' => array_keys($request->get_params()),
@@ -419,51 +440,72 @@ class Picking_API {
             $order_status = array($order_status);
         }
         
-        $args = array(
-            'status' => $order_status,
-            'limit' => $batch_size,
-            'orderby' => 'date',
-            'order' => 'ASC',
-            'meta_query' => array(
-                'relation' => 'OR',
-                array(
-                    'key' => 'picking_status',
-                    'compare' => 'NOT EXISTS',
-                ),
-                array(
-                    'key' => 'picking_status',
-                    'value' => '',
-                    'compare' => '=',
-                ),
-                array(
-                    'key' => 'picking_status',
-                    'value' => 'picking',
-                    'compare' => '=',
-                ),
-            ),
-        );
-        
-        if (!empty($appuser)) {
-            $args['meta_query'][] = array(
-                'relation' => 'OR',
-                array(
-                    'key' => 'user_claimed',
-                    'compare' => 'NOT EXISTS',
-                ),
-                array(
-                    'key' => 'user_claimed',
-                    'value' => '',
-                    'compare' => '=',
-                ),
-                array(
-                    'key' => 'user_claimed',
-                    'value' => $appuser,
-                    'compare' => '=',
-                ),
+        // Debug step: show args before query
+        if ($debug_step === 'args') {
+            return array(
+                'step' => 'args',
+                'batch_size' => $batch_size,
+                'order_status' => $order_status,
             );
         }
         
-        $orders = wc_get_orders($args);
+        // Simple query test without meta_query
+        if ($debug_step === 'simple') {
+            $simple_orders = wc_get_orders(array(
+                'status' => $order_status,
+                'limit' => 3,
+                'return' => 'ids',
+            ));
+            return array(
+                'step' => 'simple',
+                'count' => count($simple_orders),
+                'order_ids' => $simple_orders,
+            );
+        }
+        
+        // Use simple query without meta_query for better performance
+        // Filter by picking_status in PHP instead
+        $args = array(
+            'status' => $order_status,
+            'limit' => 50, // Fetch more, then filter
+            'orderby' => 'date',
+            'order' => 'ASC',
+        );
+        
+        // Debug step: after wc_get_orders
+        if ($debug_step === 'after_wc') {
+            $all_orders = wc_get_orders($args);
+            return array(
+                'step' => 'after_wc',
+                'count' => count($all_orders),
+            );
+        }
+        
+        $all_orders = wc_get_orders($args);
+        
+        // Filter orders in PHP (faster than meta_query with NOT EXISTS)
+        $orders = array();
+        foreach ($all_orders as $order) {
+            $picking_status = $order->get_meta('picking_status');
+            $user_claimed = $order->get_meta('user_claimed');
+            
+            // Skip completed orders
+            if ($picking_status === 'completed') {
+                continue;
+            }
+            
+            // Check if order is available for this user
+            if (!empty($user_claimed) && $user_claimed !== $appuser) {
+                continue;
+            }
+            
+            $orders[] = $order;
+            
+            // Stop when we have enough orders
+            if (count($orders) >= $batch_size) {
+                break;
+            }
+        }
         
         $picking_list = array();
         $all_products = array();
@@ -1170,6 +1212,184 @@ class Picking_API {
             'store_url' => get_site_url(),
             'rest_url' => get_rest_url(null, 'picking/v1'),
             'version' => PICKING_VERSION,
+        );
+    }
+    
+    /**
+     * User login with PIN
+     */
+    public function user_login($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $username = isset($data['username']) ? sanitize_text_field($data['username']) : '';
+        $pin = isset($data['pin']) ? sanitize_text_field($data['pin']) : '';
+        
+        if (empty($username) || empty($pin)) {
+            return new WP_Error('missing_credentials', __('Usuario y PIN son requeridos.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $users = get_option('picking_registered_users', array());
+        
+        foreach ($users as $user_id => $user) {
+            if (strtolower($user['name']) === strtolower($username)) {
+                // Check if user is active
+                if (empty($user['active'])) {
+                    return new WP_Error('user_inactive', __('Usuario inactivo. Contacta al administrador.', 'picking-connector'), array('status' => 403));
+                }
+                
+                // Verify PIN
+                if (wp_check_password($pin, $user['pin'])) {
+                    // Update last activity
+                    $users[$user_id]['last_activity'] = current_time('mysql');
+                    update_option('picking_registered_users', $users);
+                    
+                    return array(
+                        'success' => true,
+                        'user' => array(
+                            'id' => $user_id,
+                            'name' => $user['name'],
+                            'role' => $user['role'],
+                            'orders_completed' => $user['orders_completed'] ?? 0,
+                        ),
+                        'permissions' => $this->get_role_permissions($user['role']),
+                    );
+                } else {
+                    return new WP_Error('invalid_pin', __('PIN incorrecto.', 'picking-connector'), array('status' => 401));
+                }
+            }
+        }
+        
+        return new WP_Error('user_not_found', __('Usuario no encontrado.', 'picking-connector'), array('status' => 404));
+    }
+    
+    /**
+     * Get role permissions
+     */
+    private function get_role_permissions($role) {
+        $permissions = array(
+            'admin' => array(
+                'can_view_all_orders' => true,
+                'can_process_orders' => true,
+                'can_view_stats' => true,
+                'can_manage_users' => true,
+                'can_view_dashboard' => true,
+            ),
+            'supervisor' => array(
+                'can_view_all_orders' => true,
+                'can_process_orders' => true,
+                'can_view_stats' => true,
+                'can_manage_users' => false,
+                'can_view_dashboard' => true,
+            ),
+            'picker' => array(
+                'can_view_all_orders' => false,
+                'can_process_orders' => true,
+                'can_view_stats' => false,
+                'can_manage_users' => false,
+                'can_view_dashboard' => false,
+            ),
+        );
+        
+        return isset($permissions[$role]) ? $permissions[$role] : $permissions['picker'];
+    }
+    
+    /**
+     * Get users list (for admin/supervisor)
+     */
+    public function get_users($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $users = get_option('picking_registered_users', array());
+        $result = array();
+        
+        foreach ($users as $user_id => $user) {
+            $result[] = array(
+                'id' => $user_id,
+                'name' => $user['name'],
+                'role' => $user['role'],
+                'active' => $user['active'] ?? true,
+                'orders_completed' => $user['orders_completed'] ?? 0,
+                'last_activity' => $user['last_activity'] ?? null,
+            );
+        }
+        
+        return array(
+            'success' => true,
+            'users' => $result,
+        );
+    }
+    
+    /**
+     * Get dashboard statistics
+     */
+    public function get_dashboard_stats($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $order_status = get_option('picking_order_status', array('wc-processing'));
+        if (!is_array($order_status)) {
+            $order_status = array($order_status);
+        }
+        
+        // Get pending orders count
+        $pending_orders = wc_get_orders(array(
+            'status' => $order_status,
+            'limit' => -1,
+            'return' => 'ids',
+        ));
+        
+        // Get orders in picking
+        $picking_orders = wc_get_orders(array(
+            'status' => $order_status,
+            'limit' => -1,
+            'return' => 'ids',
+            'meta_query' => array(
+                array(
+                    'key' => 'picking_status',
+                    'value' => 'picking',
+                    'compare' => '='
+                )
+            )
+        ));
+        
+        // Get completed today
+        $completed_today = wc_get_orders(array(
+            'status' => 'completed',
+            'date_completed' => '>' . date('Y-m-d 00:00:00'),
+            'limit' => -1,
+            'return' => 'ids',
+        ));
+        
+        // Get picker activity
+        $users = get_option('picking_registered_users', array());
+        $picker_stats = array();
+        
+        foreach ($users as $user_id => $user) {
+            $picker_stats[] = array(
+                'name' => $user['name'],
+                'role' => $user['role'],
+                'orders_completed' => $user['orders_completed'] ?? 0,
+                'active' => $user['active'] ?? true,
+            );
+        }
+        
+        return array(
+            'success' => true,
+            'stats' => array(
+                'pending_orders' => count($pending_orders),
+                'picking_orders' => count($picking_orders),
+                'completed_today' => count($completed_today),
+                'total_users' => count($users),
+            ),
+            'pickers' => $picker_stats,
         );
     }
 }

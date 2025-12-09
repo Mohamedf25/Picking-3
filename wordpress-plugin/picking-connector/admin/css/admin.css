@@ -601,6 +601,190 @@
     font-size: 14px;
 }
 
+/* User Management Form */
+.picking-user-form {
+    margin-bottom: 15px;
+}
+
+.picking-form-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    align-items: flex-end;
+}
+
+.picking-form-group {
+    flex: 1;
+    min-width: 150px;
+}
+
+.picking-form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: #333;
+}
+
+.picking-form-group input,
+.picking-form-group select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.picking-form-group.picking-form-button {
+    flex: 0 0 auto;
+}
+
+.picking-form-group.picking-form-button button {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 8px 16px;
+}
+
+.picking-form-group.picking-form-button button .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+/* User Roles Grid */
+.picking-roles-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+}
+
+.picking-role-card {
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 4px;
+}
+
+.picking-role-card h4 {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.picking-role-card p {
+    margin: 0;
+    font-size: 12px;
+    color: #666;
+}
+
+/* Role Badge */
+.picking-role-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #fff;
+}
+
+/* User Actions */
+.picking-users-table .button-small {
+    padding: 2px 8px;
+    min-height: 28px;
+}
+
+.picking-users-table .button-small .dashicons {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+    line-height: 1.5;
+}
+
+.picking-users-table .button-link-delete {
+    color: #dc3545;
+}
+
+.picking-users-table .button-link-delete:hover {
+    color: #a71d2a;
+}
+
+/* Message */
+.picking-message {
+    padding: 12px 15px;
+    border-radius: 4px;
+    margin-top: 15px;
+}
+
+.picking-message.success {
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+}
+
+.picking-message.error {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+}
+
+/* Modal */
+.picking-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.picking-modal-content {
+    background: #fff;
+    border-radius: 8px;
+    padding: 25px;
+    width: 90%;
+    max-width: 450px;
+    position: relative;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+}
+
+.picking-modal-content h3 {
+    margin: 0 0 20px 0;
+    padding: 0;
+    border: none;
+}
+
+.picking-modal-close {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    font-size: 24px;
+    cursor: pointer;
+    color: #999;
+    line-height: 1;
+}
+
+.picking-modal-close:hover {
+    color: #333;
+}
+
+.picking-form-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid #eee;
+}
+
+/* Stat Number in Table */
+.picking-stat-number {
+    font-weight: 600;
+    color: #1e3a5f;
+}
+
 /* Responsive */
 @media (max-width: 782px) {
     .picking-grid {
@@ -622,5 +806,17 @@
     .picking-actions .button {
         width: 100%;
         justify-content: center;
+    }
+    
+    .picking-form-row {
+        flex-direction: column;
+    }
+    
+    .picking-form-group {
+        width: 100%;
+    }
+    
+    .picking-roles-grid {
+        grid-template-columns: 1fr;
     }
 }
