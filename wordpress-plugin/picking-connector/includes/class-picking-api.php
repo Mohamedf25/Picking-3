@@ -284,6 +284,83 @@ class Picking_API {
         return false;
     }
     
+    /**
+     * Check if an order is available for picking.
+     * Returns an array with 'available' (bool) and 'reason' (string).
+     * Logs when an order is NOT available for debugging purposes.
+     * 
+     * @param WC_Order $order The WooCommerce order object
+     * @param string|null $appuser The username attempting to pick (optional)
+     * @return array Array with 'available' (bool) and 'reason' (string)
+     */
+    private function is_order_available_for_picking($order, $appuser = null) {
+        $order_id = $order->get_id();
+        $woo_status = 'wc-' . $order->get_status();
+        $picking_status = $order->get_meta('picking_status') ?: 'pending';
+        $user_claimed = $order->get_meta('user_claimed');
+        
+        // Check if WooCommerce status is in the allowed list
+        $allowed_statuses = get_option('picking_order_status', array('wc-processing'));
+        if (!is_array($allowed_statuses)) {
+            $allowed_statuses = array($allowed_statuses);
+        }
+        
+        if (!in_array($woo_status, $allowed_statuses, true)) {
+            $reason = 'woo_status_not_allowed';
+            error_log(sprintf(
+                '[Picking][availability] order_id=%d appuser=%s reason=%s woo_status=%s allowed_statuses=%s picking_status=%s user_claimed=%s',
+                $order_id,
+                $appuser ?: '',
+                $reason,
+                $woo_status,
+                implode(',', $allowed_statuses),
+                $picking_status,
+                $user_claimed ?: ''
+            ));
+            return array('available' => false, 'reason' => $reason, 'reason_text' => __('Estado del pedido no permite picking.', 'picking-connector'));
+        }
+        
+        // Check if picking workflow is already completed or in packing
+        if (in_array($picking_status, array('completed', 'packing'), true)) {
+            $reason = 'picking_' . $picking_status;
+            error_log(sprintf(
+                '[Picking][availability] order_id=%d appuser=%s reason=%s woo_status=%s picking_status=%s user_claimed=%s',
+                $order_id,
+                $appuser ?: '',
+                $reason,
+                $woo_status,
+                $picking_status,
+                $user_claimed ?: ''
+            ));
+            $reason_text = $picking_status === 'completed' 
+                ? __('El picking de este pedido ya fue completado.', 'picking-connector')
+                : __('Este pedido está en proceso de empaque.', 'picking-connector');
+            return array('available' => false, 'reason' => $reason, 'reason_text' => $reason_text);
+        }
+        
+        // Check if order is claimed by another user
+        if (!empty($user_claimed) && !empty($appuser) && $user_claimed !== $appuser) {
+            $reason = 'claimed_by_other';
+            error_log(sprintf(
+                '[Picking][availability] order_id=%d appuser=%s reason=%s woo_status=%s picking_status=%s user_claimed=%s',
+                $order_id,
+                $appuser ?: '',
+                $reason,
+                $woo_status,
+                $picking_status,
+                $user_claimed
+            ));
+            return array(
+                'available' => false, 
+                'reason' => $reason, 
+                'reason_text' => sprintf(__('Este pedido está siendo atendido por %s.', 'picking-connector'), $user_claimed)
+            );
+        }
+        
+        // Order is available for picking
+        return array('available' => true, 'reason' => 'ok', 'reason_text' => '');
+    }
+    
     public function get_settings($request) {
         if (!$this->validate_token($request)) {
             return $this->unauthorized_response();
@@ -463,12 +540,18 @@ class Picking_API {
             );
         }
         
+        // Check if order is available for picking
+        $availability = $this->is_order_available_for_picking($order, $appuser);
+        
         return array(
             'order_id' => $order->get_id(),
             'order_number' => $order->get_order_number(),
             'status' => $order->get_status(),
             'picking_status' => $order->get_meta('picking_status') ?: 'pending',
             'user_claimed' => $order->get_meta('user_claimed'),
+            'available_for_picking' => $availability['available'],
+            'availability_reason' => $availability['reason'],
+            'availability_reason_text' => $availability['reason_text'],
             'date_created' => $order->get_date_created()->format('Y-m-d H:i:s'),
             'customer' => array(
                 'name' => $order->get_formatted_billing_full_name(),

@@ -29,6 +29,9 @@ interface Order {
   id: number
   number: string
   status: string
+  pickingStatus: string
+  availableForPicking: boolean
+  availabilityReasonText: string
   total: string
   customer_name: string
   line_items: LineItem[]
@@ -67,7 +70,10 @@ function OrderDetail() {
       setOrder({
         id: data.order_id,
         number: data.order_number || String(data.order_id),
-        status: data.picking_status || data.status || 'processing',
+        status: data.status || 'processing',
+        pickingStatus: data.picking_status || 'pending',
+        availableForPicking: data.available_for_picking ?? true,
+        availabilityReasonText: data.availability_reason_text || '',
         total: data.total || '0',
         customer_name: data.customer?.name || 'Cliente',
         line_items: (data.products || []).map((p: any) => ({
@@ -214,15 +220,15 @@ function OrderDetail() {
         fullWidth
         startIcon={<PlayArrow />}
         onClick={startPickingSession}
-        disabled={order.status !== 'processing'}
+        disabled={!order.availableForPicking}
         sx={{ py: 2 }}
       >
         Iniciar Picking
       </Button>
 
-      {order.status !== 'processing' && (
+      {!order.availableForPicking && (
         <Alert severity="info" sx={{ mt: 2 }}>
-          Este pedido no está disponible para picking
+          {order.availabilityReasonText || 'Este pedido no está disponible para picking'}
         </Alert>
       )}
     </Box>
