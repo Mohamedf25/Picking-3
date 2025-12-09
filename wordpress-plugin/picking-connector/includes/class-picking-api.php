@@ -1302,7 +1302,15 @@ class Picking_API {
         
         $files = $request->get_file_params();
         
-        if (empty($files['photo'])) {
+        // Accept both 'photo' and 'file' field names for backward compatibility
+        $photo_file = null;
+        if (!empty($files['photo'])) {
+            $photo_file = $files['photo'];
+        } elseif (!empty($files['file'])) {
+            $photo_file = $files['file'];
+        }
+        
+        if (empty($photo_file)) {
             return new WP_Error('missing_photo', __('Foto requerida.', 'picking-connector'), array('status' => 400));
         }
         
@@ -1313,7 +1321,7 @@ class Picking_API {
             wp_mkdir_p($picking_dir);
         }
         
-        $file = $files['photo'];
+        $file = $photo_file;
         $filename = sanitize_file_name($file['name']);
         $new_filename = time() . '_' . $filename;
         $destination = $picking_dir . '/' . $new_filename;

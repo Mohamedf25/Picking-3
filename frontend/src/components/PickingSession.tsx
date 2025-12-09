@@ -194,7 +194,7 @@ function PickingSession() {
 
     try {
       const formData = new FormData()
-      formData.append('file', file)
+      formData.append('photo', file)
       formData.append('order_id', currentOrderId || '')
       formData.append('appuser', pickerName)
 
@@ -203,9 +203,7 @@ function PickingSession() {
         formData,
         {
           params: { token: apiKey },
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
+          // Let axios set Content-Type automatically for proper multipart boundary
         }
       )
 
