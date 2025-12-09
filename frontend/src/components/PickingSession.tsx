@@ -18,6 +18,8 @@ import {
   ListItemText,
   Chip,
   IconButton,
+  Divider,
+  InputAdornment,
 } from '@mui/material'
 import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
@@ -28,10 +30,15 @@ import {
   ArrowBack,
   Upload,
   Print,
+  Add,
+  Remove,
+  Search,
+  Delete,
+  PersonOutline,
+  Group,
 } from '@mui/icons-material'
 import CameraScanner from './CameraScanner'
 import QRLabel from './QRLabel'
-import ProductLineItem from './ProductLineItem'
 
 interface Session {
   id: string
@@ -41,7 +48,7 @@ interface Session {
 }
 
 interface ProductLine {
-  item_id: number
+  item_id: number | string
   product_id: number
   ean: string
   sku: string
@@ -51,6 +58,20 @@ interface ProductLine {
   backorder: number
   picking_status: string
   image?: string
+  is_manual?: boolean
+  added_by?: string
+  added_at?: string
+  reason?: string
+}
+
+interface SearchProduct {
+  product_id: number
+  name: string
+  sku: string
+  ean: string
+  price: number
+  stock_quantity: number | null
+  image: string
 }
 
 function PickingSession() {
@@ -72,6 +93,23 @@ function PickingSession() {
   const [showQRLabel, setShowQRLabel] = useState(false)
   const [qrLabelData, setQrLabelData] = useState<any>(null)
   const navigate = useNavigate()
+  
+  // New state for manual product addition
+  const [addProductDialog, setAddProductDialog] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<SearchProduct[]>([])
+  const [searching, setSearching] = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState<SearchProduct | null>(null)
+  const [manualQty, setManualQty] = useState(1)
+  const [manualReason, setManualReason] = useState('')
+  const [addingProduct, setAddingProduct] = useState(false)
+  
+  // User tracking state
+  const [pickingStartedBy, setPickingStartedBy] = useState('')
+  const [pickingUsers, setPickingUsers] = useState<string[]>([])
+  
+  // Quantity modification state
+  const [updatingQty, setUpdatingQty] = useState<string | number | null>(null)
 
   // Get store config from localStorage
   const storeUrl = localStorage.getItem('store_url') || ''
@@ -119,9 +157,17 @@ function PickingSession() {
         backorder: p.backorder || 0,
         picking_status: p.picking_status || 'pending',
         image: p.image,
+        is_manual: p.is_manual || false,
+        added_by: p.added_by || '',
+        added_at: p.added_at || '',
+        reason: p.reason || '',
       }))
       
       setProductLines(lines)
+      
+      // Set user tracking info
+      setPickingStartedBy(data.picking_started_by || data.user_claimed || '')
+      setPickingUsers(data.picking_users || [])
       
       // Calculate progress
       const totalExpected = lines.reduce((sum: number, line: ProductLine) => sum + line.quantity, 0)
@@ -283,6 +329,115 @@ function PickingSession() {
     }
   }
 
+  // Search products for manual addition
+  const handleSearchProducts = async () => {
+    if (searchQuery.length < 2) return
+    
+    setSearching(true)
+    setError('')
+    
+    try {
+      const response = await axios.get(`${storeUrl}/wp-json/picking/v1/search-products`, {
+        params: {
+          token: apiKey,
+          query: searchQuery,
+          limit: 10,
+        }
+      })
+      
+      setSearchResults(response.data.products || [])
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Error al buscar productos')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  // Add manual product to picking session
+  const handleAddManualProduct = async () => {
+    if (!selectedProduct) return
+    
+    setAddingProduct(true)
+    setError('')
+    
+    try {
+      await axios.post(`${storeUrl}/wp-json/picking/v1/add-manual-item`, {
+        order_id: currentOrderId,
+        product_id: selectedProduct.product_id,
+        qty: manualQty,
+        appuser: pickerName,
+        reason: manualReason,
+      }, {
+        params: { token: apiKey }
+      })
+      
+      setSuccess(`Producto agregado: ${selectedProduct.name}`)
+      setAddProductDialog(false)
+      setSelectedProduct(null)
+      setSearchQuery('')
+      setSearchResults([])
+      setManualQty(1)
+      setManualReason('')
+      
+      await fetchOrderProducts()
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Error al agregar producto')
+    } finally {
+      setAddingProduct(false)
+    }
+  }
+
+  // Update picked quantity for a line item
+  const handleUpdateQuantity = async (itemId: string | number, newQty: number) => {
+    if (newQty < 0) return
+    
+    setUpdatingQty(itemId)
+    setError('')
+    
+    try {
+      await axios.post(`${storeUrl}/wp-json/picking/v1/update-line-picking`, {
+        order_id: currentOrderId,
+        item_id: itemId,
+        picked_qty: newQty,
+        appuser: pickerName,
+      }, {
+        params: { token: apiKey }
+      })
+      
+      await fetchOrderProducts()
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Error al actualizar cantidad')
+    } finally {
+      setUpdatingQty(null)
+    }
+  }
+
+  // Remove/reset a line item
+  const handleRemoveItem = async (itemId: string | number, isManual: boolean) => {
+    setError('')
+    
+    try {
+      if (isManual) {
+        await axios.post(`${storeUrl}/wp-json/picking/v1/remove-manual-item`, {
+          order_id: currentOrderId,
+          item_id: itemId,
+          appuser: pickerName,
+          reason: 'Retirado por el picker',
+        }, {
+          params: { token: apiKey }
+        })
+        setSuccess('Producto manual retirado')
+      } else {
+        await handleUpdateQuantity(itemId, 0)
+        setSuccess('Cantidad reiniciada a 0')
+      }
+      
+      await fetchOrderProducts()
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Error al retirar producto')
+    }
+  }
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
@@ -318,6 +473,30 @@ function PickingSession() {
         </Alert>
       )}
 
+      {/* User tracking info */}
+      {(pickingStartedBy || pickingUsers.length > 0) && (
+        <Card sx={{ mb: 3, bgcolor: 'grey.50' }}>
+          <CardContent sx={{ py: 1.5 }}>
+            {pickingStartedBy && (
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: pickingUsers.length > 0 ? 1 : 0 }}>
+                <PersonOutline sx={{ mr: 1, color: 'primary.main' }} />
+                <Typography variant="body2">
+                  <strong>Iniciado por:</strong> {pickingStartedBy}
+                </Typography>
+              </Box>
+            )}
+            {pickingUsers.length > 0 && (
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Group sx={{ mr: 1, color: 'secondary.main' }} />
+                <Typography variant="body2">
+                  <strong>Trabajado por:</strong> {pickingUsers.join(', ')}
+                </Typography>
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Typography variant="h6" gutterBottom>
@@ -334,15 +513,83 @@ function PickingSession() {
         </CardContent>
       </Card>
 
-      <Typography variant="h6" gutterBottom sx={{ mt: 3, mb: 2 }}>
-        Productos a Recoger
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 3, mb: 2 }}>
+        <Typography variant="h6">
+          Productos a Recoger
+        </Typography>
+        <Button
+          variant="outlined"
+          startIcon={<Add />}
+          onClick={() => setAddProductDialog(true)}
+          size="small"
+        >
+          Agregar Producto
+        </Button>
+      </Box>
       
       {productLines.map((line) => (
-        <ProductLineItem
-          key={line.item_id}
-          line={line}
-        />
+        <Card key={line.item_id} sx={{ mb: 2 }}>
+          <CardContent sx={{ pb: 1 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                  {line.name}
+                  {line.is_manual && (
+                    <Chip label="Manual" size="small" color="info" sx={{ ml: 1 }} />
+                  )}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  SKU: {line.sku} {line.ean && `| EAN: ${line.ean}`}
+                </Typography>
+                {line.is_manual && line.added_by && (
+                  <Typography variant="caption" color="text.secondary">
+                    Agregado por: {line.added_by}
+                  </Typography>
+                )}
+              </Box>
+              <IconButton
+                size="small"
+                color="error"
+                onClick={() => handleRemoveItem(line.item_id, line.is_manual || false)}
+                title={line.is_manual ? "Retirar producto" : "Reiniciar cantidad"}
+              >
+                <Delete />
+              </IconButton>
+            </Box>
+            
+            <Divider sx={{ my: 1.5 }} />
+            
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Typography variant="body2">
+                {line.picked_qty} de {line.quantity} recogidos
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <IconButton
+                  size="small"
+                  onClick={() => handleUpdateQuantity(line.item_id, Math.max(0, line.picked_qty - 1))}
+                  disabled={updatingQty === line.item_id || line.picked_qty <= 0}
+                >
+                  <Remove />
+                </IconButton>
+                <Typography variant="h6" sx={{ minWidth: 30, textAlign: 'center' }}>
+                  {updatingQty === line.item_id ? <CircularProgress size={20} /> : line.picked_qty}
+                </Typography>
+                <IconButton
+                  size="small"
+                  onClick={() => handleUpdateQuantity(line.item_id, line.picked_qty + 1)}
+                  disabled={updatingQty === line.item_id}
+                  color={line.picked_qty >= line.quantity ? 'default' : 'primary'}
+                >
+                  <Add />
+                </IconButton>
+              </Box>
+            </Box>
+            
+            {line.picked_qty >= line.quantity && (
+              <Chip label="Completado" color="success" size="small" sx={{ mt: 1 }} />
+            )}
+          </CardContent>
+        </Card>
       ))}
 
       <Card sx={{ mb: 3 }}>
@@ -524,6 +771,132 @@ function PickingSession() {
             color="primary"
           >
             Continuar
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Manual Product Addition Dialog */}
+      <Dialog 
+        open={addProductDialog} 
+        onClose={() => {
+          setAddProductDialog(false)
+          setSelectedProduct(null)
+          setSearchQuery('')
+          setSearchResults([])
+          setManualQty(1)
+          setManualReason('')
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Agregar Producto Manualmente</DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 1 }}>
+            <TextField
+              fullWidth
+              label="Buscar por SKU, EAN o Nombre"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleSearchProducts()}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton onClick={handleSearchProducts} disabled={searching || searchQuery.length < 2}>
+                      {searching ? <CircularProgress size={20} /> : <Search />}
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              }}
+              sx={{ mb: 2 }}
+            />
+            
+            {searchResults.length > 0 && !selectedProduct && (
+              <List sx={{ maxHeight: 200, overflow: 'auto', border: '1px solid #ddd', borderRadius: 1 }}>
+                {searchResults.map((product) => (
+                  <ListItem
+                    key={product.product_id}
+                    component="div"
+                    onClick={() => setSelectedProduct(product)}
+                    sx={{ 
+                      cursor: 'pointer',
+                      '&:hover': { bgcolor: 'action.hover' }
+                    }}
+                  >
+                    <ListItemText
+                      primary={product.name}
+                      secondary={`SKU: ${product.sku} ${product.ean ? `| EAN: ${product.ean}` : ''}`}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            )}
+            
+            {selectedProduct && (
+              <Card sx={{ mb: 2, bgcolor: 'primary.light', color: 'primary.contrastText' }}>
+                <CardContent sx={{ py: 1.5 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                    {selectedProduct.name}
+                  </Typography>
+                  <Typography variant="body2">
+                    SKU: {selectedProduct.sku} {selectedProduct.ean && `| EAN: ${selectedProduct.ean}`}
+                  </Typography>
+                  <Button 
+                    size="small" 
+                    onClick={() => setSelectedProduct(null)}
+                    sx={{ mt: 1, color: 'inherit' }}
+                  >
+                    Cambiar producto
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+            
+            {selectedProduct && (
+              <>
+                <TextField
+                  fullWidth
+                  type="number"
+                  label="Cantidad"
+                  value={manualQty}
+                  onChange={(e) => setManualQty(Math.max(1, parseInt(e.target.value) || 1))}
+                  inputProps={{ min: 1 }}
+                  sx={{ mb: 2 }}
+                />
+                
+                <TextField
+                  fullWidth
+                  label="Motivo (opcional)"
+                  value={manualReason}
+                  onChange={(e) => setManualReason(e.target.value)}
+                  placeholder="Ej: Cambio de última hora, producto adicional..."
+                  multiline
+                  rows={2}
+                />
+              </>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => {
+              setAddProductDialog(false)
+              setSelectedProduct(null)
+              setSearchQuery('')
+              setSearchResults([])
+              setManualQty(1)
+              setManualReason('')
+            }}
+            disabled={addingProduct}
+          >
+            Cancelar
+          </Button>
+          <Button
+            onClick={handleAddManualProduct}
+            variant="contained"
+            disabled={!selectedProduct || addingProduct}
+            startIcon={addingProduct ? <CircularProgress size={20} /> : <Add />}
+          >
+            {addingProduct ? 'Agregando...' : 'Agregar Producto'}
           </Button>
         </DialogActions>
       </Dialog>
