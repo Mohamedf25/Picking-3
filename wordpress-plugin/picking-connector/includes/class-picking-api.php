@@ -638,6 +638,12 @@ class Picking_API {
             $picking_users = array();
         }
         
+        // Get picking photos
+        $picking_photos = $order->get_meta('picking_photos');
+        if (!is_array($picking_photos)) {
+            $picking_photos = array();
+        }
+        
         return array(
             'order_id' => $order->get_id(),
             'order_number' => $order->get_order_number(),
@@ -647,6 +653,8 @@ class Picking_API {
             'picking_started_by' => $picking_started_by,
             'picking_users' => $picking_users,
             'picking_started_at' => $order->get_meta('picking_started_at'),
+            'picking_completed_at' => $order->get_meta('picking_completed_at'),
+            'picking_photos' => $picking_photos,
             'available_for_picking' => $availability['available'],
             'availability_reason' => $availability['reason'],
             'availability_reason_text' => $availability['reason_text'],

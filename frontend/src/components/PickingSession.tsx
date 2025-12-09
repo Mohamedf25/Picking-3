@@ -169,6 +169,11 @@ function PickingSession() {
       setPickingStartedBy(data.picking_started_by || data.user_claimed || '')
       setPickingUsers(data.picking_users || [])
       
+      // Load existing photos from API
+      if (data.picking_photos && Array.isArray(data.picking_photos)) {
+        setPhotos(data.picking_photos)
+      }
+      
       // Calculate progress
       const totalExpected = lines.reduce((sum: number, line: ProductLine) => sum + line.quantity, 0)
       const totalPicked = lines.reduce((sum: number, line: ProductLine) => sum + line.picked_qty, 0)
@@ -644,17 +649,54 @@ function PickingSession() {
           </Box>
           
           {photos.length > 0 ? (
-            <List>
-              {photos.map((_, index) => (
-                <ListItem key={index}>
-                  <ListItemText
-                    primary={`Foto ${index + 1}`}
-                    secondary="Subida correctamente"
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {photos.map((photoUrl, index) => (
+                <Box
+                  key={index}
+                  component="a"
+                  href={photoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  sx={{
+                    display: 'block',
+                    width: 80,
+                    height: 80,
+                    borderRadius: 1,
+                    overflow: 'hidden',
+                    border: '2px solid',
+                    borderColor: 'success.main',
+                    position: 'relative',
+                  }}
+                >
+                  <Box
+                    component="img"
+                    src={photoUrl}
+                    alt={`Foto ${index + 1}`}
+                    sx={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                    }}
+                    onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
+                      e.currentTarget.style.display = 'none'
+                    }}
                   />
-                  <Chip label="✓" color="success" size="small" />
-                </ListItem>
+                  <Chip
+                    label={index + 1}
+                    size="small"
+                    color="success"
+                    sx={{
+                      position: 'absolute',
+                      bottom: 2,
+                      right: 2,
+                      minWidth: 24,
+                      height: 20,
+                      fontSize: '0.7rem',
+                    }}
+                  />
+                </Box>
               ))}
-            </List>
+            </Box>
           ) : (
             <Alert severity="warning">
               Debe subir al menos una foto para completar el pedido

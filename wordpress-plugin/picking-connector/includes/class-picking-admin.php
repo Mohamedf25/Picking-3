@@ -24,6 +24,9 @@ class Picking_Admin {
         add_filter('handle_bulk_actions-woocommerce_page_wc-orders', array($this, 'handle_bulk_actions'), 20, 3);
         
         add_action('wp_dashboard_setup', array($this, 'add_dashboard_widget'));
+        
+        // Add picking audit metabox to order edit page
+        add_action('add_meta_boxes', array($this, 'add_picking_audit_metabox'));
     }
     
     public function enqueue_styles_scripts($hook) {
@@ -626,5 +629,144 @@ class Picking_Admin {
         update_option('picking_registered_users', $users);
         
         wp_send_json_success(array('message' => __('Usuario eliminado.', 'picking-connector')));
+    }
+    
+    /**
+     * Add picking audit metabox to order edit page
+     */
+    public function add_picking_audit_metabox() {
+        $screen = wc_get_container()->get(\Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController::class)->custom_orders_table_usage_is_enabled()
+            ? wc_get_page_screen_id('shop-order')
+            : 'shop_order';
+        
+        add_meta_box(
+            'picking_audit_metabox',
+            __('Auditoria de Picking', 'picking-connector'),
+            array($this, 'render_picking_audit_metabox'),
+            $screen,
+            'side',
+            'default'
+        );
+        
+        // Also add for legacy post type
+        add_meta_box(
+            'picking_audit_metabox',
+            __('Auditoria de Picking', 'picking-connector'),
+            array($this, 'render_picking_audit_metabox'),
+            'shop_order',
+            'side',
+            'default'
+        );
+    }
+    
+    /**
+     * Render picking audit metabox content
+     */
+    public function render_picking_audit_metabox($post_or_order) {
+        // Handle both post object and order object (HPOS compatibility)
+        if ($post_or_order instanceof WC_Order) {
+            $order = $post_or_order;
+        } elseif (is_a($post_or_order, 'WP_Post')) {
+            $order = wc_get_order($post_or_order->ID);
+        } else {
+            $order = wc_get_order($post_or_order);
+        }
+        
+        if (!$order) {
+            echo '<p>' . __('No se pudo cargar el pedido.', 'picking-connector') . '</p>';
+            return;
+        }
+        
+        // Get picking data
+        $picking_status = $order->get_meta('picking_status');
+        $picking_started_by = $order->get_meta('picking_started_by') ?: $order->get_meta('user_claimed');
+        $picking_started_at = $order->get_meta('picking_started_at');
+        $picking_completed_at = $order->get_meta('picking_completed_at');
+        $picking_users = $order->get_meta('picking_users');
+        $picking_photos = $order->get_meta('picking_photos');
+        
+        if (!is_array($picking_users)) {
+            $picking_users = array();
+        }
+        if (!is_array($picking_photos)) {
+            $picking_photos = array();
+        }
+        
+        // Display picking status
+        echo '<div class="picking-audit-section">';
+        echo '<p><strong>' . __('Estado:', 'picking-connector') . '</strong> ';
+        if ($picking_status) {
+            $status_labels = array(
+                'pending' => __('Pendiente', 'picking-connector'),
+                'picking' => __('En Proceso', 'picking-connector'),
+                'packing' => __('Empacando', 'picking-connector'),
+                'completed' => __('Completado', 'picking-connector'),
+            );
+            echo esc_html(isset($status_labels[$picking_status]) ? $status_labels[$picking_status] : ucfirst($picking_status));
+        } else {
+            echo __('Sin iniciar', 'picking-connector');
+        }
+        echo '</p>';
+        
+        // Display who started
+        if ($picking_started_by) {
+            echo '<p><strong>' . __('Iniciado por:', 'picking-connector') . '</strong> ' . esc_html($picking_started_by) . '</p>';
+        }
+        
+        // Display start time
+        if ($picking_started_at) {
+            echo '<p><strong>' . __('Fecha inicio:', 'picking-connector') . '</strong> ' . esc_html($picking_started_at) . '</p>';
+        }
+        
+        // Display completion time
+        if ($picking_completed_at) {
+            echo '<p><strong>' . __('Fecha fin:', 'picking-connector') . '</strong> ' . esc_html($picking_completed_at) . '</p>';
+        }
+        
+        // Display all users who worked on this order
+        if (!empty($picking_users)) {
+            echo '<p><strong>' . __('Trabajado por:', 'picking-connector') . '</strong> ' . esc_html(implode(', ', $picking_users)) . '</p>';
+        }
+        echo '</div>';
+        
+        // Display photos
+        if (!empty($picking_photos)) {
+            echo '<div class="picking-audit-photos">';
+            echo '<p><strong>' . __('Fotos de evidencia:', 'picking-connector') . '</strong> (' . count($picking_photos) . ')</p>';
+            echo '<div style="display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px;">';
+            foreach ($picking_photos as $photo_url) {
+                echo '<a href="' . esc_url($photo_url) . '" target="_blank" style="display: block;">';
+                echo '<img src="' . esc_url($photo_url) . '" style="width: 60px; height: 60px; object-fit: cover; border: 1px solid #ddd; border-radius: 4px;" />';
+                echo '</a>';
+            }
+            echo '</div>';
+            echo '</div>';
+        } else {
+            echo '<p><em>' . __('No hay fotos de evidencia.', 'picking-connector') . '</em></p>';
+        }
+        
+        // Get manual items
+        $extra_items = $order->get_meta('picking_extra_items');
+        if (is_array($extra_items) && !empty($extra_items)) {
+            $active_items = array_filter($extra_items, function($item) {
+                return !isset($item['status']) || $item['status'] === 'active';
+            });
+            
+            if (!empty($active_items)) {
+                echo '<div class="picking-audit-manual-items" style="margin-top: 15px;">';
+                echo '<p><strong>' . __('Productos agregados manualmente:', 'picking-connector') . '</strong></p>';
+                echo '<ul style="margin: 5px 0; padding-left: 20px;">';
+                foreach ($active_items as $item) {
+                    echo '<li>';
+                    echo esc_html($item['name']) . ' (x' . esc_html($item['qty']) . ')';
+                    if (!empty($item['added_by'])) {
+                        echo ' - <small>' . esc_html($item['added_by']) . '</small>';
+                    }
+                    echo '</li>';
+                }
+                echo '</ul>';
+                echo '</div>';
+            }
+        }
     }
 }
