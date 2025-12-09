@@ -42,9 +42,9 @@ function OrderDetail() {
   const navigate = useNavigate()
 
   // Get store config from localStorage
-  const storeUrl = localStorage.getItem('storeUrl') || ''
-  const apiKey = localStorage.getItem('apiKey') || ''
-  const pickerName = localStorage.getItem('pickerName') || ''
+  const storeUrl = localStorage.getItem('store_url') || ''
+  const apiKey = localStorage.getItem('api_key') || ''
+  const pickerName = localStorage.getItem('picker_name') || ''
 
   useEffect(() => {
     if (orderId) {

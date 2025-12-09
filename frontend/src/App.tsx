@@ -84,6 +84,14 @@ function AppContent(){
               }
             />
             <Route
+              path="/picking/:orderId"
+              element={
+                <ProtectedRoute>
+                  <PickingSession />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/sessions/:sessionId"
               element={
                 <ProtectedRoute>

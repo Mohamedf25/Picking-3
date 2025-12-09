@@ -117,6 +117,24 @@ class Picking_API {
             'permission_callback' => '__return_true',
         ));
         
+        register_rest_route($namespace, '/scan-product', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'scan_product'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/complete-order', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'complete_order'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/get-qr-label', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_qr_label'),
+            'permission_callback' => '__return_true',
+        ));
+        
         register_rest_route($namespace, '/config', array(
             'methods' => 'GET',
             'callback' => array($this, 'get_config'),
@@ -204,6 +222,58 @@ class Picking_API {
     
     private function unauthorized_response() {
         return new WP_Error('unauthorized', __('Token invalido o no proporcionado.', 'picking-connector'), array('status' => 401));
+    }
+    
+    /**
+     * Validate that the user (appuser) is active.
+     * Returns true if user is active or if no appuser is provided.
+     * Returns WP_Error if user is inactive or not found.
+     * 
+     * @param string $appuser The username to validate
+     * @return true|WP_Error True if valid, WP_Error if invalid
+     */
+    private function validate_user_active($appuser) {
+        // If no appuser provided, skip validation (some endpoints don't require user)
+        if (empty($appuser)) {
+            return true;
+        }
+        
+        $users = get_option('picking_registered_users', array());
+        
+        foreach ($users as $user_id => $user) {
+            if (strtolower($user['name']) === strtolower($appuser)) {
+                // Check if user is active
+                if (empty($user['active'])) {
+                    return new WP_Error('user_inactive', __('Usuario inactivo. Contacta al administrador.', 'picking-connector'), array('status' => 403));
+                }
+                return true;
+            }
+        }
+        
+        // User not found - return error
+        return new WP_Error('user_not_found', __('Usuario no encontrado.', 'picking-connector'), array('status' => 404));
+    }
+    
+    /**
+     * Helper to check user active status and return error response if invalid.
+     * Use this at the start of endpoints that require an active user.
+     * 
+     * @param WP_REST_Request $request The request object
+     * @return true|WP_Error True if valid, WP_Error if invalid
+     */
+    private function check_user_active($request) {
+        $appuser = $request->get_param('appuser');
+        
+        // Also check in request body for POST requests
+        if (empty($appuser)) {
+            $body = $request->get_body();
+            $data = json_decode($body, true);
+            if (isset($data['appuser'])) {
+                $appuser = $data['appuser'];
+            }
+        }
+        
+        return $this->validate_user_active($appuser);
     }
     
     private function is_hpos_enabled() {
@@ -313,6 +383,12 @@ class Picking_API {
     public function get_order_products($request) {
         if (!$this->validate_token($request)) {
             return $this->unauthorized_response();
+        }
+        
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
         }
         
         $order_id = $request->get_param('order_id');
@@ -430,6 +506,12 @@ class Picking_API {
         
         if (!$this->validate_token($request)) {
             return $this->unauthorized_response();
+        }
+        
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
         }
         
         $appuser = $request->get_param('appuser');
@@ -586,6 +668,12 @@ class Picking_API {
     public function update_order_products($request) {
         if (!$this->validate_token($request)) {
             return $this->unauthorized_response();
+        }
+        
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
         }
         
         $body = $request->get_body();
@@ -1037,6 +1125,12 @@ class Picking_API {
             return $this->unauthorized_response();
         }
         
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
         $body = $request->get_body();
         $data = json_decode($body, true);
         
@@ -1074,6 +1168,12 @@ class Picking_API {
             return $this->unauthorized_response();
         }
         
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
         $body = $request->get_body();
         $data = json_decode($body, true);
         
@@ -1103,6 +1203,12 @@ class Picking_API {
     public function upload_photo($request) {
         if (!$this->validate_token($request)) {
             return $this->unauthorized_response();
+        }
+        
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
         }
         
         $order_id = $request->get_param('order_id');
@@ -1390,6 +1496,215 @@ class Picking_API {
                 'total_users' => count($users),
             ),
             'pickers' => $picker_stats,
+        );
+    }
+    
+    /**
+     * Scan a product during picking session.
+     * Increments the picked quantity for the matching product in the order.
+     */
+    public function scan_product($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? $data['order_id'] : $request->get_param('order_id');
+        $ean = isset($data['ean']) ? $data['ean'] : $request->get_param('ean');
+        $sku = isset($data['sku']) ? $data['sku'] : $request->get_param('sku');
+        $appuser = isset($data['appuser']) ? $data['appuser'] : $request->get_param('appuser');
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        if (empty($ean) && empty($sku)) {
+            return new WP_Error('missing_code', __('EAN o SKU requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        // Find the product by EAN or SKU
+        $product_found = false;
+        $product_name = '';
+        
+        foreach ($order->get_items() as $item_id => $item) {
+            $product = $item->get_product();
+            
+            if (!$product) {
+                continue;
+            }
+            
+            // Check SKU match
+            $product_sku = $product->get_sku();
+            if (!empty($sku) && $product_sku === $sku) {
+                $product_found = true;
+            }
+            
+            // Check EAN match (check various meta keys)
+            if (!empty($ean) && !$product_found) {
+                $ean_meta_keys = array('_alg_ean', '_ean', '_gtin', '_barcode', 'ean', 'gtin', 'barcode');
+                foreach ($ean_meta_keys as $meta_key) {
+                    $product_ean = $product->get_meta($meta_key);
+                    if (!empty($product_ean) && $product_ean === $ean) {
+                        $product_found = true;
+                        break;
+                    }
+                }
+            }
+            
+            if ($product_found) {
+                $product_name = $product->get_name();
+                
+                // Increment picked quantity
+                $picked_qty = (int) $item->get_meta('picked_qty');
+                $expected_qty = $item->get_quantity();
+                
+                if ($picked_qty < $expected_qty) {
+                    $picked_qty++;
+                    $item->update_meta_data('picked_qty', $picked_qty);
+                    
+                    // Update picking status
+                    if ($picked_qty >= $expected_qty) {
+                        $item->update_meta_data('picking_status', 'completed');
+                    } else {
+                        $item->update_meta_data('picking_status', 'partial');
+                    }
+                    
+                    $item->save();
+                    
+                    return array(
+                        'success' => true,
+                        'message' => sprintf(__('Producto escaneado: %s (%d/%d)', 'picking-connector'), $product_name, $picked_qty, $expected_qty),
+                        'product_name' => $product_name,
+                        'picked_qty' => $picked_qty,
+                        'expected_qty' => $expected_qty,
+                    );
+                } else {
+                    return new WP_Error('already_picked', sprintf(__('Producto ya completado: %s', 'picking-connector'), $product_name), array('status' => 400));
+                }
+            }
+        }
+        
+        return new WP_Error('product_not_found', __('Producto no encontrado en el pedido.', 'picking-connector'), array('status' => 404));
+    }
+    
+    /**
+     * Complete a picking session and update order status.
+     */
+    public function complete_order($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? $data['order_id'] : $request->get_param('order_id');
+        $appuser = isset($data['appuser']) ? $data['appuser'] : $request->get_param('appuser');
+        $notes = isset($data['notes']) ? $data['notes'] : '';
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        // Update picking metadata
+        $order->update_meta_data('picking_status', 'completed');
+        $order->update_meta_data('picking_completed_at', current_time('mysql'));
+        $order->update_meta_data('picking_completed_by', $appuser);
+        
+        // Add order note
+        if (!empty($notes)) {
+            $order->add_order_note(sprintf(__('Picking completado por %s: %s', 'picking-connector'), $appuser, $notes));
+        } else {
+            $order->add_order_note(sprintf(__('Picking completado por %s', 'picking-connector'), $appuser));
+        }
+        
+        // Update order status to completed if auto_complete is enabled
+        $auto_complete = get_option('picking_auto_complete', '1') === '1';
+        if ($auto_complete) {
+            $order->update_status('completed', __('Pedido completado via Picking App.', 'picking-connector'));
+        }
+        
+        $order->save();
+        
+        // Update user's completed orders count
+        if (!empty($appuser)) {
+            $users = get_option('picking_registered_users', array());
+            foreach ($users as $user_id => $user) {
+                if (strtolower($user['name']) === strtolower($appuser)) {
+                    $users[$user_id]['orders_completed'] = ($user['orders_completed'] ?? 0) + 1;
+                    $users[$user_id]['last_activity'] = current_time('mysql');
+                    update_option('picking_registered_users', $users);
+                    break;
+                }
+            }
+        }
+        
+        return array(
+            'success' => true,
+            'message' => __('Pedido completado.', 'picking-connector'),
+            'order_id' => $order_id,
+            'new_status' => $auto_complete ? 'completed' : $order->get_status(),
+        );
+    }
+    
+    /**
+     * Get QR label data for an order.
+     */
+    public function get_qr_label($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $order_id = $request->get_param('order_id');
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        return array(
+            'success' => true,
+            'order_id' => $order->get_id(),
+            'order_number' => $order->get_order_number(),
+            'customer_name' => $order->get_formatted_billing_full_name(),
+            'total' => $order->get_total(),
+            'woocommerce_url' => admin_url('post.php?post=' . $order->get_id() . '&action=edit'),
+            'qr_data' => json_encode(array(
+                'order_id' => $order->get_id(),
+                'order_number' => $order->get_order_number(),
+                'total' => $order->get_total(),
+            )),
         );
     }
 }

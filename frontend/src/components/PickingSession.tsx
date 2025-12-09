@@ -41,21 +41,21 @@ interface Session {
 }
 
 interface ProductLine {
-  id: string
+  item_id: number
   product_id: number
   ean: string
-  expected_qty: number
+  sku: string
+  name: string
+  quantity: number
   picked_qty: number
-  status: string
-  product_name: string
-  image_url?: string
+  backorder: number
+  picking_status: string
+  image?: string
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-
 function PickingSession() {
-  const { sessionId } = useParams<{ sessionId: string }>()
-  const [session, setSession] = useState<Session | null>(null)
+  const { sessionId, orderId } = useParams<{ sessionId?: string; orderId?: string }>()
+  const [_session, setSession] = useState<Session | null>(null)
   const [productLines, setProductLines] = useState<ProductLine[]>([])
   const [scanValue, setScanValue] = useState('')
   const [loading, setLoading] = useState(true)
@@ -73,41 +73,74 @@ function PickingSession() {
   const [qrLabelData, setQrLabelData] = useState<any>(null)
   const navigate = useNavigate()
 
-  useEffect(() => {
-    if (sessionId) {
-      fetchSession()
-      fetchSessionLines()
-    }
-  }, [sessionId])
+  // Get store config from localStorage
+  const storeUrl = localStorage.getItem('store_url') || ''
+  const apiKey = localStorage.getItem('api_key') || ''
+  const pickerName = localStorage.getItem('picker_name') || ''
+  
+  // Use orderId from URL params (from /picking/:orderId route) or sessionId
+  const currentOrderId = orderId || sessionId
 
-  const fetchSession = async () => {
+  useEffect(() => {
+    if (currentOrderId) {
+      fetchOrderProducts()
+    }
+  }, [currentOrderId])
+
+  const fetchOrderProducts = async () => {
     try {
-      setSession({
-        id: sessionId!,
-        order_id: 123,
-        status: 'in_progress',
-        started_at: new Date().toISOString(),
+      const response = await axios.get(`${storeUrl}/wp-json/picking/v1/get-order-products`, {
+        params: {
+          token: apiKey,
+          order_id: currentOrderId,
+          appuser: pickerName
+        }
       })
-    } catch (err) {
-      setError('Error al cargar la sesión')
+      
+      const data = response.data
+      
+      // Set session info
+      setSession({
+        id: currentOrderId!,
+        order_id: data.order_id,
+        status: data.picking_status || 'picking',
+        started_at: data.picking_started_at || new Date().toISOString(),
+      })
+      
+      // Transform products to ProductLine format
+      const lines: ProductLine[] = (data.products || []).map((p: any) => ({
+        item_id: p.item_id || p.product_id,
+        product_id: p.product_id,
+        ean: p.ean || '',
+        sku: p.sku || '',
+        name: p.name,
+        quantity: p.quantity || 1,
+        picked_qty: p.picked_qty || 0,
+        backorder: p.backorder || 0,
+        picking_status: p.picking_status || 'pending',
+        image: p.image,
+      }))
+      
+      setProductLines(lines)
+      
+      // Calculate progress
+      const totalExpected = lines.reduce((sum: number, line: ProductLine) => sum + line.quantity, 0)
+      const totalPicked = lines.reduce((sum: number, line: ProductLine) => sum + line.picked_qty, 0)
+      setProgress(totalExpected > 0 ? (totalPicked / totalExpected) * 100 : 0)
+    } catch (err: any) {
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        setError('Sesión expirada o usuario inactivo. Por favor, inicie sesión de nuevo.')
+        // Clear auth and redirect to login
+        localStorage.removeItem('user_logged_in')
+        localStorage.removeItem('picking_user')
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 2000)
+      } else {
+        setError('Error al cargar los productos del pedido')
+      }
     } finally {
       setLoading(false)
-    }
-  }
-
-  const fetchSessionLines = async () => {
-    try {
-      const token = localStorage.getItem('token')
-      const response = await axios.get(`${API_BASE_URL}/sessions/${sessionId}/lines`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      setProductLines(response.data)
-      
-      const totalExpected = response.data.reduce((sum: number, line: ProductLine) => sum + line.expected_qty, 0)
-      const totalPicked = response.data.reduce((sum: number, line: ProductLine) => sum + line.picked_qty, 0)
-      setProgress(totalExpected > 0 ? (totalPicked / totalExpected) * 100 : 0)
-    } catch (err) {
-      console.error('Error fetching session lines:', err)
     }
   }
 
@@ -120,18 +153,28 @@ function PickingSession() {
     setSuccess('')
 
     try {
-      const token = localStorage.getItem('token')
-      await axios.post(`${API_BASE_URL}/sessions/${sessionId}/scan`, {
+      await axios.post(`${storeUrl}/wp-json/picking/v1/scan-product`, {
+        order_id: currentOrderId,
         ean: eanToScan,
+        appuser: pickerName,
       }, {
-        headers: { Authorization: `Bearer ${token}` }
+        params: { token: apiKey }
       })
       setSuccess(`Producto escaneado: ${eanToScan}`)
       setScanValue('')
       
-      await fetchSessionLines()
+      await fetchOrderProducts()
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error al escanear producto')
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        setError('Sesión expirada o usuario inactivo. Por favor, inicie sesión de nuevo.')
+        localStorage.removeItem('user_logged_in')
+        localStorage.removeItem('picking_user')
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 2000)
+      } else {
+        setError(err.response?.data?.message || 'Error al escanear producto')
+      }
     } finally {
       setScanning(false)
     }
@@ -152,24 +195,34 @@ function PickingSession() {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const token = localStorage.getItem('token')
+      formData.append('order_id', currentOrderId || '')
+      formData.append('appuser', pickerName)
 
       const response = await axios.post(
-        `${API_BASE_URL}/sessions/${sessionId}/photo`,
+        `${storeUrl}/wp-json/picking/v1/upload-photo`,
         formData,
         {
+          params: { token: apiKey },
           headers: {
             'Content-Type': 'multipart/form-data',
-            'Authorization': `Bearer ${token}`
           },
         }
       )
 
-      setPhotos(prev => [...prev, response.data.url])
+      setPhotos(prev => [...prev, response.data.url || response.data.photo_url || 'uploaded'])
       setSuccess('Foto subida correctamente')
       setPhotoDialog(false)
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error al subir foto')
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        setError('Sesión expirada o usuario inactivo. Por favor, inicie sesión de nuevo.')
+        localStorage.removeItem('user_logged_in')
+        localStorage.removeItem('picking_user')
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 2000)
+      } else {
+        setError(err.response?.data?.message || 'Error al subir foto')
+      }
     } finally {
       setUploading(false)
     }
@@ -185,27 +238,48 @@ function PickingSession() {
     setError('')
 
     try {
-      const token = localStorage.getItem('token')
-      await axios.post(`${API_BASE_URL}/sessions/${sessionId}/finish`, {
+      // Complete the picking session via plugin API
+      await axios.post(`${storeUrl}/wp-json/picking/v1/complete-order`, {
+        order_id: currentOrderId,
+        appuser: pickerName,
         notes: 'Sesión completada desde la app móvil',
       }, {
-        headers: { Authorization: `Bearer ${token}` }
+        params: { token: apiKey }
       })
       
+      // Try to get QR label data
       try {
-        const qrResponse = await axios.get(`${API_BASE_URL}/api/orders/${session?.order_id}/qr-label`, {
-          headers: { Authorization: `Bearer ${token}` }
+        const qrResponse = await axios.get(`${storeUrl}/wp-json/picking/v1/get-qr-label`, {
+          params: {
+            token: apiKey,
+            order_id: currentOrderId,
+          }
         })
         setQrLabelData(qrResponse.data)
         setShowQRLabel(true)
       } catch (qrError) {
         console.error('Error generating QR label:', qrError)
+        // Continue even if QR label fails
       }
       
       setSuccess('Sesión finalizada correctamente')
       setFinishDialog(false)
+      
+      // Navigate back to orders after a delay if no QR label
+      if (!showQRLabel) {
+        setTimeout(() => navigate('/orders'), 2000)
+      }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error al finalizar sesión')
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        setError('Sesión expirada o usuario inactivo. Por favor, inicie sesión de nuevo.')
+        localStorage.removeItem('user_logged_in')
+        localStorage.removeItem('picking_user')
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 2000)
+      } else {
+        setError(err.response?.data?.message || 'Error al finalizar sesión')
+      }
     } finally {
       setFinishing(false)
     }
@@ -257,7 +331,7 @@ function PickingSession() {
             sx={{ mb: 2, height: 8, borderRadius: 4 }}
           />
           <Typography variant="body2" color="text.secondary">
-            {Math.round(progress)}% completado ({productLines.filter(line => line.picked_qty >= line.expected_qty).length} de {productLines.length} productos)
+            {Math.round(progress)}% completado ({productLines.filter(line => line.picked_qty >= line.quantity).length} de {productLines.length} productos)
           </Typography>
         </CardContent>
       </Card>
@@ -268,7 +342,7 @@ function PickingSession() {
       
       {productLines.map((line) => (
         <ProductLineItem
-          key={line.id}
+          key={line.item_id}
           line={line}
         />
       ))}
