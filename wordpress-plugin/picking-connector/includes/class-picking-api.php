@@ -1605,11 +1605,14 @@ class Picking_API {
         $sku = isset($data['sku']) ? $data['sku'] : $request->get_param('sku');
         $appuser = isset($data['appuser']) ? $data['appuser'] : $request->get_param('appuser');
         
+        // Treat scanned code generically: use whichever is provided (sku takes precedence)
+        $code = trim($sku !== '' && $sku !== null ? $sku : ($ean !== '' && $ean !== null ? $ean : ''));
+        
         if (empty($order_id)) {
             return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
         }
         
-        if (empty($ean) && empty($sku)) {
+        if ($code === '') {
             return new WP_Error('missing_code', __('EAN o SKU requerido.', 'picking-connector'), array('status' => 400));
         }
         
@@ -1619,7 +1622,7 @@ class Picking_API {
             return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
         }
         
-        // Find the product by EAN or SKU
+        // Find the product by checking both SKU and EAN fields against the scanned code
         $product_found = false;
         $product_name = '';
         
@@ -1630,18 +1633,18 @@ class Picking_API {
                 continue;
             }
             
-            // Check SKU match
-            $product_sku = $product->get_sku();
-            if (!empty($sku) && $product_sku === $sku) {
+            // Check SKU match first (case-insensitive)
+            $product_sku = trim((string) $product->get_sku());
+            if ($product_sku !== '' && strcasecmp($product_sku, $code) === 0) {
                 $product_found = true;
             }
             
-            // Check EAN match (check various meta keys)
-            if (!empty($ean) && !$product_found) {
+            // Check EAN match (check various meta keys, case-insensitive)
+            if (!$product_found) {
                 $ean_meta_keys = array('_alg_ean', '_ean', '_gtin', '_barcode', 'ean', 'gtin', 'barcode');
                 foreach ($ean_meta_keys as $meta_key) {
-                    $product_ean = $product->get_meta($meta_key);
-                    if (!empty($product_ean) && $product_ean === $ean) {
+                    $product_ean = trim((string) $product->get_meta($meta_key));
+                    if ($product_ean !== '' && strcasecmp($product_ean, $code) === 0) {
                         $product_found = true;
                         break;
                     }
@@ -1680,6 +1683,21 @@ class Picking_API {
                 }
             }
         }
+        
+        // Log debug info when product is not found
+        $order_skus = array();
+        foreach ($order->get_items() as $item_id => $item) {
+            $product = $item->get_product();
+            if ($product) {
+                $order_skus[] = $product->get_sku();
+            }
+        }
+        error_log(sprintf(
+            '[Picking][scan_product] Product not found: order_id=%d code=%s order_skus=%s',
+            $order_id,
+            $code,
+            implode(',', $order_skus)
+        ));
         
         return new WP_Error('product_not_found', __('Producto no encontrado en el pedido.', 'picking-connector'), array('status' => 404));
     }
