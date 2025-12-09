@@ -117,6 +117,24 @@ class Picking_API {
             'permission_callback' => '__return_true',
         ));
         
+        register_rest_route($namespace, '/scan-product', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'scan_product'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/complete-order', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'complete_order'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/get-qr-label', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_qr_label'),
+            'permission_callback' => '__return_true',
+        ));
+        
         register_rest_route($namespace, '/config', array(
             'methods' => 'GET',
             'callback' => array($this, 'get_config'),
@@ -126,6 +144,31 @@ class Picking_API {
         register_rest_route($namespace, '/connect', array(
             'methods' => array('GET', 'POST', 'OPTIONS'),
             'callback' => array($this, 'handle_connection'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        // New endpoints for advanced picking management
+        register_rest_route($namespace, '/search-products', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'search_products'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/add-manual-item', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'add_manual_item'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/update-line-picking', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'update_line_picking'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/remove-manual-item', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'remove_manual_item'),
             'permission_callback' => '__return_true',
         ));
         
@@ -206,12 +249,165 @@ class Picking_API {
         return new WP_Error('unauthorized', __('Token invalido o no proporcionado.', 'picking-connector'), array('status' => 401));
     }
     
+    /**
+     * Validate that the user (appuser) is active.
+     * Returns true if user is active or if no appuser is provided.
+     * Returns WP_Error if user is inactive or not found.
+     * 
+     * @param string $appuser The username to validate
+     * @return true|WP_Error True if valid, WP_Error if invalid
+     */
+    private function validate_user_active($appuser) {
+        // If no appuser provided, skip validation (some endpoints don't require user)
+        if (empty($appuser)) {
+            return true;
+        }
+        
+        $users = get_option('picking_registered_users', array());
+        
+        foreach ($users as $user_id => $user) {
+            if (strtolower($user['name']) === strtolower($appuser)) {
+                // Check if user is active
+                if (empty($user['active'])) {
+                    return new WP_Error('user_inactive', __('Usuario inactivo. Contacta al administrador.', 'picking-connector'), array('status' => 403));
+                }
+                return true;
+            }
+        }
+        
+        // User not found - return error
+        return new WP_Error('user_not_found', __('Usuario no encontrado.', 'picking-connector'), array('status' => 404));
+    }
+    
+    /**
+     * Helper to check user active status and return error response if invalid.
+     * Use this at the start of endpoints that require an active user.
+     * 
+     * @param WP_REST_Request $request The request object
+     * @return true|WP_Error True if valid, WP_Error if invalid
+     */
+    private function check_user_active($request) {
+        $appuser = $request->get_param('appuser');
+        
+        // Also check in request body for POST requests
+        if (empty($appuser)) {
+            $body = $request->get_body();
+            $data = json_decode($body, true);
+            if (isset($data['appuser'])) {
+                $appuser = $data['appuser'];
+            }
+        }
+        
+        return $this->validate_user_active($appuser);
+    }
+    
     private function is_hpos_enabled() {
         if (class_exists('Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController')) {
             $controller = wc_get_container()->get('Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController');
             return $controller->custom_orders_table_usage_is_enabled();
         }
         return false;
+    }
+    
+    /**
+     * Check if an order is available for picking.
+     * Returns an array with 'available' (bool) and 'reason' (string).
+     * Logs when an order is NOT available for debugging purposes.
+     * 
+     * @param WC_Order $order The WooCommerce order object
+     * @param string|null $appuser The username attempting to pick (optional)
+     * @return array Array with 'available' (bool) and 'reason' (string)
+     */
+    private function is_order_available_for_picking($order, $appuser = null) {
+        $order_id = $order->get_id();
+        $woo_status = 'wc-' . $order->get_status();
+        $picking_status = $order->get_meta('picking_status') ?: 'pending';
+        $user_claimed = $order->get_meta('user_claimed');
+        
+        // Check if WooCommerce status is in the allowed list
+        $allowed_statuses = get_option('picking_order_status', array('wc-processing'));
+        if (!is_array($allowed_statuses)) {
+            $allowed_statuses = array($allowed_statuses);
+        }
+        
+        if (!in_array($woo_status, $allowed_statuses, true)) {
+            $reason = 'woo_status_not_allowed';
+            error_log(sprintf(
+                '[Picking][availability] order_id=%d appuser=%s reason=%s woo_status=%s allowed_statuses=%s picking_status=%s user_claimed=%s',
+                $order_id,
+                $appuser ?: '',
+                $reason,
+                $woo_status,
+                implode(',', $allowed_statuses),
+                $picking_status,
+                $user_claimed ?: ''
+            ));
+            return array('available' => false, 'reason' => $reason, 'reason_text' => __('Estado del pedido no permite picking.', 'picking-connector'));
+        }
+        
+        // Check if picking workflow is already completed or in packing
+        if (in_array($picking_status, array('completed', 'packing'), true)) {
+            $reason = 'picking_' . $picking_status;
+            error_log(sprintf(
+                '[Picking][availability] order_id=%d appuser=%s reason=%s woo_status=%s picking_status=%s user_claimed=%s',
+                $order_id,
+                $appuser ?: '',
+                $reason,
+                $woo_status,
+                $picking_status,
+                $user_claimed ?: ''
+            ));
+            $reason_text = $picking_status === 'completed' 
+                ? __('El picking de este pedido ya fue completado.', 'picking-connector')
+                : __('Este pedido está en proceso de empaque.', 'picking-connector');
+            return array('available' => false, 'reason' => $reason, 'reason_text' => $reason_text);
+        }
+        
+        // Check if order is claimed by another user
+        if (!empty($user_claimed) && !empty($appuser) && $user_claimed !== $appuser) {
+            $reason = 'claimed_by_other';
+            error_log(sprintf(
+                '[Picking][availability] order_id=%d appuser=%s reason=%s woo_status=%s picking_status=%s user_claimed=%s',
+                $order_id,
+                $appuser ?: '',
+                $reason,
+                $woo_status,
+                $picking_status,
+                $user_claimed
+            ));
+            return array(
+                'available' => false, 
+                'reason' => $reason, 
+                'reason_text' => sprintf(__('Este pedido está siendo atendido por %s.', 'picking-connector'), $user_claimed)
+            );
+        }
+        
+        // Order is available for picking
+        return array('available' => true, 'reason' => 'ok', 'reason_text' => '');
+    }
+    
+    /**
+     * Record a user as having worked on an order's picking session.
+     * Maintains a list of all users who have performed any picking action.
+     * 
+     * @param WC_Order $order The WooCommerce order object
+     * @param string $appuser The username who performed the action
+     */
+    private function record_picking_user($order, $appuser) {
+        if (empty($appuser)) {
+            return;
+        }
+        
+        $users = $order->get_meta('picking_users');
+        if (!is_array($users)) {
+            $users = array();
+        }
+        
+        if (!in_array($appuser, $users, true)) {
+            $users[] = $appuser;
+            $order->update_meta_data('picking_users', $users);
+            $order->save();
+        }
     }
     
     public function get_settings($request) {
@@ -315,6 +511,12 @@ class Picking_API {
             return $this->unauthorized_response();
         }
         
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
         $order_id = $request->get_param('order_id');
         $appuser = $request->get_param('appuser');
         
@@ -337,7 +539,13 @@ class Picking_API {
             $order->update_meta_data('user_claimed', $appuser);
             $order->update_meta_data('picking_status', 'picking');
             $order->update_meta_data('picking_started_at', current_time('mysql'));
+            $order->update_meta_data('picking_started_by', $appuser);
             $order->save();
+        }
+        
+        // Record this user as having worked on the order
+        if (!empty($appuser)) {
+            $this->record_picking_user($order, $appuser);
         }
         
         $products = array();
@@ -387,12 +595,69 @@ class Picking_API {
             );
         }
         
+        // Get manual/extra items added during picking
+        $extra_items = $order->get_meta('picking_extra_items');
+        if (is_array($extra_items)) {
+            foreach ($extra_items as $extra_item) {
+                // Only include active items (not removed)
+                if (isset($extra_item['status']) && $extra_item['status'] !== 'active') {
+                    continue;
+                }
+                
+                $products[] = array(
+                    'item_id' => $extra_item['item_id'],
+                    'product_id' => $extra_item['product_id'],
+                    'variation_id' => 0,
+                    'name' => $extra_item['name'],
+                    'sku' => $extra_item['sku'],
+                    'ean' => isset($extra_item['ean']) ? $extra_item['ean'] : '',
+                    'quantity' => $extra_item['qty'],
+                    'picked_qty' => isset($extra_item['picked_qty']) ? (int) $extra_item['picked_qty'] : (int) $extra_item['qty'],
+                    'backorder' => 0,
+                    'picking_status' => 'completed',
+                    'price' => 0,
+                    'image' => '',
+                    'stock_quantity' => null,
+                    'location' => '',
+                    'weight' => '',
+                    'is_manual' => true,
+                    'added_by' => isset($extra_item['added_by']) ? $extra_item['added_by'] : '',
+                    'added_at' => isset($extra_item['added_at']) ? $extra_item['added_at'] : '',
+                    'reason' => isset($extra_item['reason']) ? $extra_item['reason'] : '',
+                );
+            }
+        }
+        
+        // Check if order is available for picking
+        $availability = $this->is_order_available_for_picking($order, $appuser);
+        
+        // Get user tracking info
+        $picking_started_by = $order->get_meta('picking_started_by') ?: $order->get_meta('user_claimed');
+        $picking_users = $order->get_meta('picking_users');
+        if (!is_array($picking_users)) {
+            $picking_users = array();
+        }
+        
+        // Get picking photos
+        $picking_photos = $order->get_meta('picking_photos');
+        if (!is_array($picking_photos)) {
+            $picking_photos = array();
+        }
+        
         return array(
             'order_id' => $order->get_id(),
             'order_number' => $order->get_order_number(),
             'status' => $order->get_status(),
             'picking_status' => $order->get_meta('picking_status') ?: 'pending',
             'user_claimed' => $order->get_meta('user_claimed'),
+            'picking_started_by' => $picking_started_by,
+            'picking_users' => $picking_users,
+            'picking_started_at' => $order->get_meta('picking_started_at'),
+            'picking_completed_at' => $order->get_meta('picking_completed_at'),
+            'picking_photos' => $picking_photos,
+            'available_for_picking' => $availability['available'],
+            'availability_reason' => $availability['reason'],
+            'availability_reason_text' => $availability['reason_text'],
             'date_created' => $order->get_date_created()->format('Y-m-d H:i:s'),
             'customer' => array(
                 'name' => $order->get_formatted_billing_full_name(),
@@ -430,6 +695,12 @@ class Picking_API {
         
         if (!$this->validate_token($request)) {
             return $this->unauthorized_response();
+        }
+        
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
         }
         
         $appuser = $request->get_param('appuser');
@@ -586,6 +857,12 @@ class Picking_API {
     public function update_order_products($request) {
         if (!$this->validate_token($request)) {
             return $this->unauthorized_response();
+        }
+        
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
         }
         
         $body = $request->get_body();
@@ -1037,6 +1314,12 @@ class Picking_API {
             return $this->unauthorized_response();
         }
         
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
         $body = $request->get_body();
         $data = json_decode($body, true);
         
@@ -1074,6 +1357,12 @@ class Picking_API {
             return $this->unauthorized_response();
         }
         
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
         $body = $request->get_body();
         $data = json_decode($body, true);
         
@@ -1105,6 +1394,12 @@ class Picking_API {
             return $this->unauthorized_response();
         }
         
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
         $order_id = $request->get_param('order_id');
         
         if (empty($order_id)) {
@@ -1113,7 +1408,15 @@ class Picking_API {
         
         $files = $request->get_file_params();
         
-        if (empty($files['photo'])) {
+        // Accept both 'photo' and 'file' field names for backward compatibility
+        $photo_file = null;
+        if (!empty($files['photo'])) {
+            $photo_file = $files['photo'];
+        } elseif (!empty($files['file'])) {
+            $photo_file = $files['file'];
+        }
+        
+        if (empty($photo_file)) {
             return new WP_Error('missing_photo', __('Foto requerida.', 'picking-connector'), array('status' => 400));
         }
         
@@ -1124,7 +1427,7 @@ class Picking_API {
             wp_mkdir_p($picking_dir);
         }
         
-        $file = $files['photo'];
+        $file = $photo_file;
         $filename = sanitize_file_name($file['name']);
         $new_filename = time() . '_' . $filename;
         $destination = $picking_dir . '/' . $new_filename;
@@ -1390,6 +1693,627 @@ class Picking_API {
                 'total_users' => count($users),
             ),
             'pickers' => $picker_stats,
+        );
+    }
+    
+    /**
+     * Scan a product during picking session.
+     * Increments the picked quantity for the matching product in the order.
+     */
+    public function scan_product($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? $data['order_id'] : $request->get_param('order_id');
+        $ean = isset($data['ean']) ? $data['ean'] : $request->get_param('ean');
+        $sku = isset($data['sku']) ? $data['sku'] : $request->get_param('sku');
+        $appuser = isset($data['appuser']) ? $data['appuser'] : $request->get_param('appuser');
+        
+        // Treat scanned code generically: use whichever is provided (sku takes precedence)
+        $code = trim($sku !== '' && $sku !== null ? $sku : ($ean !== '' && $ean !== null ? $ean : ''));
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        if ($code === '') {
+            return new WP_Error('missing_code', __('EAN o SKU requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        // Find the product by checking both SKU and EAN fields against the scanned code
+        $product_found = false;
+        $product_name = '';
+        
+        foreach ($order->get_items() as $item_id => $item) {
+            $product = $item->get_product();
+            
+            if (!$product) {
+                continue;
+            }
+            
+            // Check SKU match first (case-insensitive)
+            $product_sku = trim((string) $product->get_sku());
+            if ($product_sku !== '' && strcasecmp($product_sku, $code) === 0) {
+                $product_found = true;
+            }
+            
+            // Check EAN match (check various meta keys, case-insensitive)
+            if (!$product_found) {
+                $ean_meta_keys = array('_alg_ean', '_ean', '_gtin', '_barcode', 'ean', 'gtin', 'barcode');
+                foreach ($ean_meta_keys as $meta_key) {
+                    $product_ean = trim((string) $product->get_meta($meta_key));
+                    if ($product_ean !== '' && strcasecmp($product_ean, $code) === 0) {
+                        $product_found = true;
+                        break;
+                    }
+                }
+            }
+            
+            if ($product_found) {
+                $product_name = $product->get_name();
+                
+                // Increment picked quantity
+                $picked_qty = (int) $item->get_meta('picked_qty');
+                $expected_qty = $item->get_quantity();
+                
+                if ($picked_qty < $expected_qty) {
+                    $picked_qty++;
+                    $item->update_meta_data('picked_qty', $picked_qty);
+                    
+                    // Update picking status
+                    if ($picked_qty >= $expected_qty) {
+                        $item->update_meta_data('picking_status', 'completed');
+                    } else {
+                        $item->update_meta_data('picking_status', 'partial');
+                    }
+                    
+                    $item->save();
+                    
+                    return array(
+                        'success' => true,
+                        'message' => sprintf(__('Producto escaneado: %s (%d/%d)', 'picking-connector'), $product_name, $picked_qty, $expected_qty),
+                        'product_name' => $product_name,
+                        'picked_qty' => $picked_qty,
+                        'expected_qty' => $expected_qty,
+                    );
+                } else {
+                    return new WP_Error('already_picked', sprintf(__('Producto ya completado: %s', 'picking-connector'), $product_name), array('status' => 400));
+                }
+            }
+        }
+        
+        // Log debug info when product is not found
+        $order_skus = array();
+        foreach ($order->get_items() as $item_id => $item) {
+            $product = $item->get_product();
+            if ($product) {
+                $order_skus[] = $product->get_sku();
+            }
+        }
+        error_log(sprintf(
+            '[Picking][scan_product] Product not found: order_id=%d code=%s order_skus=%s',
+            $order_id,
+            $code,
+            implode(',', $order_skus)
+        ));
+        
+        return new WP_Error('product_not_found', __('Producto no encontrado en el pedido.', 'picking-connector'), array('status' => 404));
+    }
+    
+    /**
+     * Complete a picking session and update order status.
+     */
+    public function complete_order($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? $data['order_id'] : $request->get_param('order_id');
+        $appuser = isset($data['appuser']) ? $data['appuser'] : $request->get_param('appuser');
+        $notes = isset($data['notes']) ? $data['notes'] : '';
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        // Update picking metadata
+        $order->update_meta_data('picking_status', 'completed');
+        $order->update_meta_data('picking_completed_at', current_time('mysql'));
+        $order->update_meta_data('picking_completed_by', $appuser);
+        
+        // Add order note
+        if (!empty($notes)) {
+            $order->add_order_note(sprintf(__('Picking completado por %s: %s', 'picking-connector'), $appuser, $notes));
+        } else {
+            $order->add_order_note(sprintf(__('Picking completado por %s', 'picking-connector'), $appuser));
+        }
+        
+        // Update order status to completed if auto_complete is enabled
+        $auto_complete = get_option('picking_auto_complete', '1') === '1';
+        if ($auto_complete) {
+            $order->update_status('completed', __('Pedido completado via Picking App.', 'picking-connector'));
+        }
+        
+        $order->save();
+        
+        // Update user's completed orders count
+        if (!empty($appuser)) {
+            $users = get_option('picking_registered_users', array());
+            foreach ($users as $user_id => $user) {
+                if (strtolower($user['name']) === strtolower($appuser)) {
+                    $users[$user_id]['orders_completed'] = ($user['orders_completed'] ?? 0) + 1;
+                    $users[$user_id]['last_activity'] = current_time('mysql');
+                    update_option('picking_registered_users', $users);
+                    break;
+                }
+            }
+        }
+        
+        return array(
+            'success' => true,
+            'message' => __('Pedido completado.', 'picking-connector'),
+            'order_id' => $order_id,
+            'new_status' => $auto_complete ? 'completed' : $order->get_status(),
+        );
+    }
+    
+    /**
+     * Get QR label data for an order.
+     */
+    public function get_qr_label($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $order_id = $request->get_param('order_id');
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        return array(
+            'success' => true,
+            'order_id' => $order->get_id(),
+            'order_number' => $order->get_order_number(),
+            'customer_name' => $order->get_formatted_billing_full_name(),
+            'total' => $order->get_total(),
+            'woocommerce_url' => admin_url('post.php?post=' . $order->get_id() . '&action=edit'),
+            'qr_data' => json_encode(array(
+                'order_id' => $order->get_id(),
+                'order_number' => $order->get_order_number(),
+                'total' => $order->get_total(),
+            )),
+        );
+    }
+    
+    /**
+     * Search products by SKU, EAN, or name.
+     * Returns a list of products matching the search query.
+     */
+    public function search_products($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $query = $request->get_param('query');
+        $limit = $request->get_param('limit') ?: 20;
+        
+        if (empty($query) || strlen($query) < 2) {
+            return new WP_Error('invalid_query', __('Ingrese al menos 2 caracteres para buscar.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $args = array(
+            'post_type' => 'product',
+            'post_status' => 'publish',
+            'posts_per_page' => $limit,
+            's' => $query,
+        );
+        
+        $products_query = new WP_Query($args);
+        $results = array();
+        
+        if ($products_query->have_posts()) {
+            while ($products_query->have_posts()) {
+                $products_query->the_post();
+                $product = wc_get_product(get_the_ID());
+                
+                if ($product) {
+                    $results[] = array(
+                        'product_id' => $product->get_id(),
+                        'name' => $product->get_name(),
+                        'sku' => $product->get_sku(),
+                        'ean' => $product->get_meta('_ean') ?: $product->get_meta('_gtin') ?: '',
+                        'price' => $product->get_price(),
+                        'stock_quantity' => $product->get_stock_quantity(),
+                        'image' => wp_get_attachment_url($product->get_image_id()) ?: '',
+                    );
+                }
+            }
+            wp_reset_postdata();
+        }
+        
+        // Also search by SKU and EAN if no results or few results
+        if (count($results) < $limit) {
+            global $wpdb;
+            
+            // Search by SKU
+            $sku_products = $wpdb->get_col($wpdb->prepare(
+                "SELECT post_id FROM {$wpdb->postmeta} 
+                WHERE meta_key = '_sku' AND meta_value LIKE %s 
+                LIMIT %d",
+                '%' . $wpdb->esc_like($query) . '%',
+                $limit - count($results)
+            ));
+            
+            // Search by EAN/GTIN
+            $ean_products = $wpdb->get_col($wpdb->prepare(
+                "SELECT post_id FROM {$wpdb->postmeta} 
+                WHERE meta_key IN ('_ean', '_gtin', '_barcode') AND meta_value LIKE %s 
+                LIMIT %d",
+                '%' . $wpdb->esc_like($query) . '%',
+                $limit - count($results)
+            ));
+            
+            $additional_ids = array_unique(array_merge($sku_products, $ean_products));
+            $existing_ids = array_column($results, 'product_id');
+            
+            foreach ($additional_ids as $product_id) {
+                if (in_array($product_id, $existing_ids)) {
+                    continue;
+                }
+                
+                $product = wc_get_product($product_id);
+                if ($product && $product->get_status() === 'publish') {
+                    $results[] = array(
+                        'product_id' => $product->get_id(),
+                        'name' => $product->get_name(),
+                        'sku' => $product->get_sku(),
+                        'ean' => $product->get_meta('_ean') ?: $product->get_meta('_gtin') ?: '',
+                        'price' => $product->get_price(),
+                        'stock_quantity' => $product->get_stock_quantity(),
+                        'image' => wp_get_attachment_url($product->get_image_id()) ?: '',
+                    );
+                }
+                
+                if (count($results) >= $limit) {
+                    break;
+                }
+            }
+        }
+        
+        return array(
+            'success' => true,
+            'products' => $results,
+            'count' => count($results),
+        );
+    }
+    
+    /**
+     * Add a manual item to the picking session.
+     * Stores extra items in order meta as picking_extra_items.
+     */
+    public function add_manual_item($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? intval($data['order_id']) : 0;
+        $product_id = isset($data['product_id']) ? intval($data['product_id']) : 0;
+        $qty = isset($data['qty']) ? intval($data['qty']) : 1;
+        $appuser = isset($data['appuser']) ? sanitize_text_field($data['appuser']) : '';
+        $reason = isset($data['reason']) ? sanitize_text_field($data['reason']) : '';
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        if (empty($product_id)) {
+            return new WP_Error('missing_product_id', __('ID de producto requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        $product = wc_get_product($product_id);
+        if (!$product) {
+            return new WP_Error('product_not_found', __('Producto no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        // Get existing extra items
+        $extra_items = $order->get_meta('picking_extra_items');
+        if (!is_array($extra_items)) {
+            $extra_items = array();
+        }
+        
+        // Generate a unique ID for this manual item
+        $item_id = 'manual_' . time() . '_' . $product_id;
+        
+        // Add the new item
+        $new_item = array(
+            'item_id' => $item_id,
+            'product_id' => $product_id,
+            'sku' => $product->get_sku(),
+            'name' => $product->get_name(),
+            'qty' => $qty,
+            'picked_qty' => $qty,
+            'added_by' => $appuser,
+            'added_at' => current_time('mysql'),
+            'status' => 'active',
+            'reason' => $reason,
+            'is_manual' => true,
+        );
+        
+        $extra_items[] = $new_item;
+        $order->update_meta_data('picking_extra_items', $extra_items);
+        $order->save();
+        
+        // Record the user who added this item
+        $this->record_picking_user($order, $appuser);
+        
+        // Add order note
+        $order->add_order_note(sprintf(
+            __('Producto agregado manualmente por %s: %s (SKU: %s), Cantidad: %d. Motivo: %s', 'picking-connector'),
+            $appuser,
+            $product->get_name(),
+            $product->get_sku(),
+            $qty,
+            $reason ?: 'No especificado'
+        ));
+        
+        return array(
+            'success' => true,
+            'message' => __('Producto agregado correctamente.', 'picking-connector'),
+            'item' => $new_item,
+        );
+    }
+    
+    /**
+     * Update the picked quantity for a line item.
+     * Works for both regular order items and manual items.
+     */
+    public function update_line_picking($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? intval($data['order_id']) : 0;
+        $item_id = isset($data['item_id']) ? $data['item_id'] : '';
+        $picked_qty = isset($data['picked_qty']) ? intval($data['picked_qty']) : 0;
+        $appuser = isset($data['appuser']) ? sanitize_text_field($data['appuser']) : '';
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        if (empty($item_id)) {
+            return new WP_Error('missing_item_id', __('ID de item requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        // Check if it's a manual item
+        if (strpos($item_id, 'manual_') === 0) {
+            $extra_items = $order->get_meta('picking_extra_items');
+            if (!is_array($extra_items)) {
+                return new WP_Error('item_not_found', __('Item no encontrado.', 'picking-connector'), array('status' => 404));
+            }
+            
+            $found = false;
+            foreach ($extra_items as &$item) {
+                if ($item['item_id'] === $item_id) {
+                    $item['picked_qty'] = $picked_qty;
+                    $item['last_modified_by'] = $appuser;
+                    $item['last_modified_at'] = current_time('mysql');
+                    $found = true;
+                    break;
+                }
+            }
+            
+            if (!$found) {
+                return new WP_Error('item_not_found', __('Item no encontrado.', 'picking-connector'), array('status' => 404));
+            }
+            
+            $order->update_meta_data('picking_extra_items', $extra_items);
+            $order->save();
+        } else {
+            // Regular order item
+            $item_id_int = intval($item_id);
+            $items = $order->get_items();
+            
+            if (!isset($items[$item_id_int])) {
+                return new WP_Error('item_not_found', __('Item no encontrado.', 'picking-connector'), array('status' => 404));
+            }
+            
+            $item = $items[$item_id_int];
+            $item->update_meta_data('picked_qty', $picked_qty);
+            
+            // Update picking status based on quantity
+            $expected_qty = $item->get_quantity();
+            if ($picked_qty >= $expected_qty) {
+                $item->update_meta_data('picking_status', 'completed');
+            } elseif ($picked_qty > 0) {
+                $item->update_meta_data('picking_status', 'partial');
+            } else {
+                $item->update_meta_data('picking_status', 'pending');
+            }
+            
+            $item->save();
+        }
+        
+        // Record the user who modified this item
+        $this->record_picking_user($order, $appuser);
+        
+        return array(
+            'success' => true,
+            'message' => __('Cantidad actualizada correctamente.', 'picking-connector'),
+            'item_id' => $item_id,
+            'picked_qty' => $picked_qty,
+        );
+    }
+    
+    /**
+     * Remove a manual item from the picking session.
+     * Marks the item as removed rather than deleting it for audit purposes.
+     */
+    public function remove_manual_item($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? intval($data['order_id']) : 0;
+        $item_id = isset($data['item_id']) ? $data['item_id'] : '';
+        $appuser = isset($data['appuser']) ? sanitize_text_field($data['appuser']) : '';
+        $reason = isset($data['reason']) ? sanitize_text_field($data['reason']) : '';
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        if (empty($item_id)) {
+            return new WP_Error('missing_item_id', __('ID de item requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        // Check if it's a manual item
+        if (strpos($item_id, 'manual_') === 0) {
+            $extra_items = $order->get_meta('picking_extra_items');
+            if (!is_array($extra_items)) {
+                return new WP_Error('item_not_found', __('Item no encontrado.', 'picking-connector'), array('status' => 404));
+            }
+            
+            $found = false;
+            $removed_item = null;
+            foreach ($extra_items as &$item) {
+                if ($item['item_id'] === $item_id) {
+                    $item['status'] = 'removed';
+                    $item['removed_by'] = $appuser;
+                    $item['removed_at'] = current_time('mysql');
+                    $item['removal_reason'] = $reason;
+                    $removed_item = $item;
+                    $found = true;
+                    break;
+                }
+            }
+            
+            if (!$found) {
+                return new WP_Error('item_not_found', __('Item no encontrado.', 'picking-connector'), array('status' => 404));
+            }
+            
+            $order->update_meta_data('picking_extra_items', $extra_items);
+            $order->save();
+            
+            // Add order note
+            $order->add_order_note(sprintf(
+                __('Producto manual retirado por %s: %s. Motivo: %s', 'picking-connector'),
+                $appuser,
+                $removed_item['name'],
+                $reason ?: 'No especificado'
+            ));
+        } else {
+            // For regular items, we just reset the picked quantity to 0
+            $item_id_int = intval($item_id);
+            $items = $order->get_items();
+            
+            if (!isset($items[$item_id_int])) {
+                return new WP_Error('item_not_found', __('Item no encontrado.', 'picking-connector'), array('status' => 404));
+            }
+            
+            $item = $items[$item_id_int];
+            $item->update_meta_data('picked_qty', 0);
+            $item->update_meta_data('picking_status', 'pending');
+            $item->save();
+            
+            // Add order note
+            $order->add_order_note(sprintf(
+                __('Picking de producto reiniciado por %s: %s. Motivo: %s', 'picking-connector'),
+                $appuser,
+                $item->get_name(),
+                $reason ?: 'No especificado'
+            ));
+        }
+        
+        // Record the user who removed this item
+        $this->record_picking_user($order, $appuser);
+        
+        return array(
+            'success' => true,
+            'message' => __('Item retirado correctamente.', 'picking-connector'),
+            'item_id' => $item_id,
         );
     }
 }
