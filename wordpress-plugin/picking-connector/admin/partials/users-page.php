@@ -7,8 +7,11 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// Get registered users from options
+// Get registered users from options (with defensive check)
 $picking_users = get_option('picking_registered_users', array());
+if (!is_array($picking_users)) {
+    $picking_users = array();
+}
 
 // Define user roles
 $user_roles = array(

@@ -484,7 +484,12 @@ class Picking_Admin {
             }
         }
         
-        $user_id = wp_generate_uuid4();
+        // Generate unique user ID (compatible with older WordPress versions)
+        if (function_exists('wp_generate_uuid4')) {
+            $user_id = wp_generate_uuid4();
+        } else {
+            $user_id = 'picking_' . md5(strtolower($user_name) . '|' . microtime(true) . '|' . wp_rand());
+        }
         $users[$user_id] = array(
             'name' => $user_name,
             'pin' => wp_hash_password($user_pin),

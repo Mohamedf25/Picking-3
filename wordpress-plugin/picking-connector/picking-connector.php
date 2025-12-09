@@ -3,7 +3,7 @@
  * Plugin Name: Picking Connector
  * Plugin URI: https://github.com/Mohamedf25/Picking-3
  * Description: Conecta tu tienda WooCommerce con la aplicacion de Picking para gestionar pedidos de forma rapida y eficiente. Sistema de picking inteligente con escaneo de codigos de barras, picking individual y por lotes.
- * Version: 1.0.0
+ * Version: 2.3.0
  * Author: Picking System
  * Author URI: https://github.com/Mohamedf25
  * Text Domain: picking-connector
@@ -18,7 +18,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('PICKING_VERSION', '1.0.0');
+define('PICKING_VERSION', '2.3.0');
 define('PICKING_PLUGIN_DIR', trailingslashit(plugin_dir_path(__FILE__)));
 define('PICKING_PLUGIN_URL', trailingslashit(plugin_dir_url(__FILE__)));
 define('PICKING_PLUGIN_BASENAME', plugin_basename(__FILE__));
