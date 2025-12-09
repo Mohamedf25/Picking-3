@@ -27,7 +27,12 @@ import {
   FormControlLabel,
   Alert,
   Chip,
-  IconButton
+  IconButton,
+  List,
+  ListItem,
+  ListItemText,
+  Divider,
+  CircularProgress
 } from '@mui/material'
 import {
   Add,
@@ -36,7 +41,9 @@ import {
   Settings,
   Assessment,
   People,
-  Visibility
+  Visibility,
+  PhotoCamera,
+  Person
 } from '@mui/icons-material'
 import axios from 'axios'
 import { useAuth } from '../contexts/AuthContext'
@@ -75,6 +82,39 @@ interface OrderAudit {
   }>
 }
 
+interface SessionDetail {
+  id: string
+  order_id: number
+  status: string
+  started_at: string
+  finished_at?: string
+  started_by?: {
+    id: string
+    username: string
+    role: string
+  }
+  participants: Array<{
+    id: string
+    username: string
+    role: string
+  }>
+  photos: Array<{
+    id: string
+    url: string
+    created_at: string
+  }>
+  lines: Array<{
+    id: string
+    product_id: number
+    ean: string
+    expected_qty: number
+    picked_qty: number
+    status: string
+    product_name: string
+  }>
+  events_count: number
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 function AdminPanel() {
@@ -88,23 +128,26 @@ function AdminPanel() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   
-  const [userDialog, setUserDialog] = useState(false)
-  const [editingUser, setEditingUser] = useState<User | null>(null)
-  const [newUser, setNewUser] = useState({
-    username: '',
-    password: '',
-    role: 'picker',
-    warehouse_id: ''
-  })
+    const [userDialog, setUserDialog] = useState(false)
+    const [editingUser, setEditingUser] = useState<User | null>(null)
+    const [newUser, setNewUser] = useState({
+      username: '',
+      password: '',
+      role: 'picker',
+      warehouse_id: ''
+    })
+    const [sessionDetailDialog, setSessionDetailDialog] = useState(false)
+    const [selectedSessionDetail, setSelectedSessionDetail] = useState<SessionDetail | null>(null)
+    const [loadingDetail, setLoadingDetail] = useState(false)
 
-  useEffect(() => {
-    if (user?.role === 'admin') {
-      fetchUsers()
-      fetchConfig()
-      fetchSessions()
-      fetchOrders()
-    }
-  }, [user])
+    useEffect(() => {
+      if (user?.role === 'admin') {
+        fetchUsers()
+        fetchConfig()
+        fetchSessions()
+        fetchOrders()
+      }
+    }, [user])
 
   const getAuthHeaders = () => ({
     headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
@@ -202,21 +245,39 @@ function AdminPanel() {
     }
   }
 
-  const openUserDialog = (user?: User) => {
-    if (user) {
-      setEditingUser(user)
-      setNewUser({
-        username: user.username,
-        password: '',
-        role: user.role,
-        warehouse_id: user.warehouse_id || ''
-      })
-    } else {
-      setEditingUser(null)
-      setNewUser({ username: '', password: '', role: 'picker', warehouse_id: '' })
+    const openUserDialog = (user?: User) => {
+      if (user) {
+        setEditingUser(user)
+        setNewUser({
+          username: user.username,
+          password: '',
+          role: user.role,
+          warehouse_id: user.warehouse_id || ''
+        })
+      } else {
+        setEditingUser(null)
+        setNewUser({ username: '', password: '', role: 'picker', warehouse_id: '' })
+      }
+      setUserDialog(true)
     }
-    setUserDialog(true)
-  }
+
+    const fetchSessionDetail = async (sessionId: string) => {
+      setLoadingDetail(true)
+      try {
+        const response = await axios.get(`${API_BASE_URL}/sessions/${sessionId}/detail`, getAuthHeaders())
+        setSelectedSessionDetail(response.data)
+        setSessionDetailDialog(true)
+      } catch (err) {
+        setError('Error al cargar detalles de la sesión')
+      } finally {
+        setLoadingDetail(false)
+      }
+    }
+
+    const getUsernameById = (userId: string) => {
+      const foundUser = users.find(u => u.id === userId)
+      return foundUser ? foundUser.username : userId.substring(0, 8) + '...'
+    }
 
   if (user?.role !== 'admin') {
     return (
@@ -378,45 +439,56 @@ function AdminPanel() {
         </Card>
       )}
 
-      {tabValue === 2 && (
-        <Box>
-          <Card sx={{ mb: 3 }}>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>Sesiones de Picking</Typography>
-              <TableContainer component={Paper}>
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>ID Sesión</TableCell>
-                      <TableCell>Pedido</TableCell>
-                      <TableCell>Usuario</TableCell>
-                      <TableCell>Estado</TableCell>
-                      <TableCell>Iniciado</TableCell>
-                      <TableCell>Finalizado</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {sessions.slice(0, 10).map((session) => (
-                      <TableRow key={session.id}>
-                        <TableCell>{session.id.substring(0, 8)}...</TableCell>
-                        <TableCell>{session.order_id}</TableCell>
-                        <TableCell>{session.user_id.substring(0, 8)}...</TableCell>
-                        <TableCell>
-                          <Chip 
-                            label={session.status} 
-                            color={session.status === 'finished' ? 'success' : 'primary'}
-                            size="small"
-                          />
-                        </TableCell>
-                        <TableCell>{new Date(session.started_at).toLocaleString()}</TableCell>
-                        <TableCell>{session.finished_at ? new Date(session.finished_at).toLocaleString() : '-'}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </CardContent>
-          </Card>
+            {tabValue === 2 && (
+              <Box>
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>Sesiones de Picking</Typography>
+                    <TableContainer component={Paper}>
+                      <Table>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>ID Sesión</TableCell>
+                            <TableCell>Pedido</TableCell>
+                            <TableCell>Usuario</TableCell>
+                            <TableCell>Estado</TableCell>
+                            <TableCell>Iniciado</TableCell>
+                            <TableCell>Finalizado</TableCell>
+                            <TableCell>Acciones</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {sessions.slice(0, 10).map((session) => (
+                            <TableRow key={session.id}>
+                              <TableCell>{session.id.substring(0, 8)}...</TableCell>
+                              <TableCell>{session.order_id}</TableCell>
+                              <TableCell>{getUsernameById(session.user_id)}</TableCell>
+                              <TableCell>
+                                <Chip 
+                                  label={session.status} 
+                                  color={session.status === 'finished' ? 'success' : 'primary'}
+                                  size="small"
+                                />
+                              </TableCell>
+                              <TableCell>{new Date(session.started_at).toLocaleString()}</TableCell>
+                              <TableCell>{session.finished_at ? new Date(session.finished_at).toLocaleString() : '-'}</TableCell>
+                              <TableCell>
+                                <IconButton 
+                                  size="small" 
+                                  onClick={() => fetchSessionDetail(session.id)}
+                                  disabled={loadingDetail}
+                                  title="Ver detalles"
+                                >
+                                  {loadingDetail ? <CircularProgress size={16} /> : <Visibility />}
+                                </IconButton>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
 
           <Card>
             <CardContent>
@@ -543,6 +615,158 @@ function AdminPanel() {
           >
             {loading ? 'Guardando...' : editingUser ? 'Actualizar' : 'Crear'}
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Session Detail Dialog */}
+      <Dialog 
+        open={sessionDetailDialog} 
+        onClose={() => setSessionDetailDialog(false)} 
+        maxWidth="md" 
+        fullWidth
+      >
+        <DialogTitle>
+          Detalles de la Sesión de Picking
+        </DialogTitle>
+        <DialogContent>
+          {selectedSessionDetail && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Session Info */}
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>Información General</Typography>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Pedido</Typography>
+                      <Typography variant="body1">{selectedSessionDetail.order_id}</Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Estado</Typography>
+                      <Chip 
+                        label={selectedSessionDetail.status} 
+                        color={selectedSessionDetail.status === 'finished' ? 'success' : 'primary'}
+                        size="small"
+                      />
+                    </Box>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Iniciado</Typography>
+                      <Typography variant="body1">
+                        {selectedSessionDetail.started_at ? new Date(selectedSessionDetail.started_at).toLocaleString() : '-'}
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Finalizado</Typography>
+                      <Typography variant="body1">
+                        {selectedSessionDetail.finished_at ? new Date(selectedSessionDetail.finished_at).toLocaleString() : '-'}
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Iniciado por</Typography>
+                      <Typography variant="body1">
+                        {selectedSessionDetail.started_by?.username || 'Desconocido'}
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Total de Eventos</Typography>
+                      <Typography variant="body1">{selectedSessionDetail.events_count}</Typography>
+                    </Box>
+                  </Box>
+                </CardContent>
+              </Card>
+
+              {/* Participants */}
+              <Card variant="outlined">
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                    <People color="primary" />
+                    <Typography variant="h6">
+                      Participantes ({selectedSessionDetail.participants.length})
+                    </Typography>
+                  </Box>
+                  <List dense>
+                    {selectedSessionDetail.participants.map((participant) => (
+                      <ListItem key={participant.id}>
+                        <Person sx={{ mr: 1 }} />
+                        <ListItemText
+                          primary={participant.username}
+                          secondary={participant.role}
+                        />
+                      </ListItem>
+                    ))}
+                  </List>
+                </CardContent>
+              </Card>
+
+              {/* Photos */}
+              <Card variant="outlined">
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                    <PhotoCamera color="primary" />
+                    <Typography variant="h6">
+                      Fotos de Evidencia ({selectedSessionDetail.photos.length})
+                    </Typography>
+                  </Box>
+                  {selectedSessionDetail.photos.length > 0 ? (
+                    <List dense>
+                      {selectedSessionDetail.photos.map((photo, index) => (
+                        <ListItem key={photo.id} divider>
+                          <ListItemText
+                            primary={`Foto ${index + 1}`}
+                            secondary={`Subida: ${new Date(photo.created_at).toLocaleString()}`}
+                          />
+                          <Chip label="Subida" color="success" size="small" />
+                        </ListItem>
+                      ))}
+                    </List>
+                  ) : (
+                    <Alert severity="warning">No hay fotos de evidencia</Alert>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Products */}
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Productos ({selectedSessionDetail.lines.length})
+                  </Typography>
+                  <TableContainer>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Producto</TableCell>
+                          <TableCell>EAN</TableCell>
+                          <TableCell>Esperado</TableCell>
+                          <TableCell>Recogido</TableCell>
+                          <TableCell>Estado</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {selectedSessionDetail.lines.map((line) => (
+                          <TableRow key={line.id}>
+                            <TableCell>{line.product_name}</TableCell>
+                            <TableCell>{line.ean}</TableCell>
+                            <TableCell>{line.expected_qty}</TableCell>
+                            <TableCell>{line.picked_qty}</TableCell>
+                            <TableCell>
+                              <Chip 
+                                label={line.status} 
+                                color={line.status === 'completed' ? 'success' : line.status === 'in_progress' ? 'warning' : 'default'}
+                                size="small"
+                              />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CardContent>
+              </Card>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSessionDetailDialog(false)}>Cerrar</Button>
         </DialogActions>
       </Dialog>
     </Box>

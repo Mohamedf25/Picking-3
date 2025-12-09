@@ -706,6 +706,416 @@ async def get_session_lines(
     
     return lines_with_details
 
+@app.get("/sessions/{session_id}/photos", response_model=List[PhotoResponse])
+async def get_session_photos(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all photos for a picking session"""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session.user_id != current_user.id and current_user.role not in ["admin", "supervisor"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    photos = db.query(Photo).filter(Photo.session_id == session_id).all()
+    
+    return [PhotoResponse(id=photo.id, url=photo.url, created_at=photo.created_at) for photo in photos]
+
+@app.get("/sessions/{session_id}/detail")
+async def get_session_detail(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get complete session details including lines, photos, and audit info"""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session.user_id != current_user.id and current_user.role not in ["admin", "supervisor"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    lines = db.query(Line).filter(Line.session_id == session_id).all()
+    photos = db.query(Photo).filter(Photo.session_id == session_id).all()
+    events = db.query(Event).filter(Event.session_id == session_id).all()
+    
+    participant_ids = set()
+    participant_ids.add(str(session.user_id))
+    for event in events:
+        participant_ids.add(str(event.user_id))
+    
+    participants = []
+    for user_id in participant_ids:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            participants.append({
+                "id": str(user.id),
+                "username": user.username,
+                "role": user.role
+            })
+    
+    starter_user = db.query(User).filter(User.id == session.user_id).first()
+    
+    lines_with_details = []
+    for line in lines:
+        product_details = get_woocommerce_product_details(line.product_id)
+        lines_with_details.append({
+            "id": str(line.id),
+            "product_id": line.product_id,
+            "ean": line.ean,
+            "expected_qty": line.expected_qty,
+            "picked_qty": line.picked_qty,
+            "status": line.status,
+            "product_name": product_details.get('name') if product_details else f"Producto {line.ean}",
+            "image_url": product_details.get('image_url') if product_details else None
+        })
+    
+    return {
+        "id": str(session.id),
+        "order_id": session.order_id,
+        "status": session.status,
+        "started_at": session.started_at.isoformat() if session.started_at else None,
+        "finished_at": session.finished_at.isoformat() if session.finished_at else None,
+        "started_by": {
+            "id": str(starter_user.id),
+            "username": starter_user.username,
+            "role": starter_user.role
+        } if starter_user else None,
+        "participants": participants,
+        "lines": lines_with_details,
+        "photos": [{"id": str(photo.id), "url": photo.url, "created_at": photo.created_at.isoformat()} for photo in photos],
+        "events_count": len(events)
+    }
+
+@app.post("/sessions/{session_id}/lines")
+async def add_session_line(
+    session_id: str,
+    line_data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Add a product manually to a picking session"""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session.status != "in_progress":
+        raise HTTPException(status_code=400, detail="Cannot modify a finished session")
+    
+    if session.user_id != current_user.id and current_user.role not in ["admin", "supervisor"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    ean = line_data.get("ean", "")
+    product_id = line_data.get("product_id", 0)
+    expected_qty = line_data.get("expected_qty", 1)
+    
+    if not ean and not product_id:
+        raise HTTPException(status_code=400, detail="EAN or product_id is required")
+    
+    existing_line = db.query(Line).filter(
+        Line.session_id == session_id,
+        Line.ean == ean
+    ).first()
+    
+    if existing_line:
+        existing_line.expected_qty += expected_qty
+        db.commit()
+        db.refresh(existing_line)
+        
+        event = Event(
+            session_id=session_id,
+            user_id=current_user.id,
+            type="line_updated",
+            payload={"ean": ean, "expected_qty": existing_line.expected_qty, "action": "quantity_increased"}
+        )
+        db.add(event)
+        db.commit()
+        
+        return {
+            "id": str(existing_line.id),
+            "product_id": existing_line.product_id,
+            "ean": existing_line.ean,
+            "expected_qty": existing_line.expected_qty,
+            "picked_qty": existing_line.picked_qty,
+            "status": existing_line.status,
+            "message": "Cantidad actualizada en línea existente"
+        }
+    
+    new_line = Line(
+        session_id=session_id,
+        product_id=product_id,
+        ean=ean,
+        expected_qty=expected_qty,
+        picked_qty=0,
+        status="pending"
+    )
+    db.add(new_line)
+    db.commit()
+    db.refresh(new_line)
+    
+    event = Event(
+        session_id=session_id,
+        user_id=current_user.id,
+        type="line_added",
+        payload={"ean": ean, "product_id": product_id, "expected_qty": expected_qty}
+    )
+    db.add(event)
+    db.commit()
+    
+    return {
+        "id": str(new_line.id),
+        "product_id": new_line.product_id,
+        "ean": new_line.ean,
+        "expected_qty": new_line.expected_qty,
+        "picked_qty": new_line.picked_qty,
+        "status": new_line.status,
+        "message": "Producto agregado correctamente"
+    }
+
+@app.put("/sessions/{session_id}/lines/{line_id}")
+async def update_session_line(
+    session_id: str,
+    line_id: str,
+    line_data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a line in a picking session (edit quantity)"""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session.status != "in_progress":
+        raise HTTPException(status_code=400, detail="Cannot modify a finished session")
+    
+    if session.user_id != current_user.id and current_user.role not in ["admin", "supervisor"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    line = db.query(Line).filter(Line.id == line_id, Line.session_id == session_id).first()
+    if not line:
+        raise HTTPException(status_code=404, detail="Line not found")
+    
+    old_expected_qty = line.expected_qty
+    old_picked_qty = line.picked_qty
+    
+    if "expected_qty" in line_data:
+        line.expected_qty = line_data["expected_qty"]
+    
+    if "picked_qty" in line_data:
+        new_picked_qty = line_data["picked_qty"]
+        if new_picked_qty < 0:
+            raise HTTPException(status_code=400, detail="Picked quantity cannot be negative")
+        line.picked_qty = new_picked_qty
+    
+    if line.picked_qty >= line.expected_qty:
+        line.status = "completed"
+    elif line.picked_qty > 0:
+        line.status = "in_progress"
+    else:
+        line.status = "pending"
+    
+    db.commit()
+    db.refresh(line)
+    
+    event = Event(
+        session_id=session_id,
+        user_id=current_user.id,
+        type="line_updated",
+        payload={
+            "line_id": str(line_id),
+            "old_expected_qty": old_expected_qty,
+            "new_expected_qty": line.expected_qty,
+            "old_picked_qty": old_picked_qty,
+            "new_picked_qty": line.picked_qty
+        }
+    )
+    db.add(event)
+    db.commit()
+    
+    return {
+        "id": str(line.id),
+        "product_id": line.product_id,
+        "ean": line.ean,
+        "expected_qty": line.expected_qty,
+        "picked_qty": line.picked_qty,
+        "status": line.status,
+        "message": "Línea actualizada correctamente"
+    }
+
+@app.delete("/sessions/{session_id}/lines/{line_id}")
+async def delete_session_line(
+    session_id: str,
+    line_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Remove a line from a picking session (undo/remove product)"""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session.status != "in_progress":
+        raise HTTPException(status_code=400, detail="Cannot modify a finished session")
+    
+    if session.user_id != current_user.id and current_user.role not in ["admin", "supervisor"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    line = db.query(Line).filter(Line.id == line_id, Line.session_id == session_id).first()
+    if not line:
+        raise HTTPException(status_code=404, detail="Line not found")
+    
+    line_info = {
+        "ean": line.ean,
+        "product_id": line.product_id,
+        "expected_qty": line.expected_qty,
+        "picked_qty": line.picked_qty
+    }
+    
+    db.delete(line)
+    db.commit()
+    
+    event = Event(
+        session_id=session_id,
+        user_id=current_user.id,
+        type="line_removed",
+        payload=line_info
+    )
+    db.add(event)
+    db.commit()
+    
+    return {"message": "Producto eliminado correctamente", "removed_line": line_info}
+
+@app.post("/sessions/{session_id}/undo-scan")
+async def undo_scan(
+    session_id: str,
+    undo_data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Undo a scan (reduce picked quantity by 1)"""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session.status != "in_progress":
+        raise HTTPException(status_code=400, detail="Cannot modify a finished session")
+    
+    if session.user_id != current_user.id and current_user.role not in ["admin", "supervisor"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    line_id = undo_data.get("line_id")
+    ean = undo_data.get("ean")
+    
+    if line_id:
+        line = db.query(Line).filter(Line.id == line_id, Line.session_id == session_id).first()
+    elif ean:
+        line = db.query(Line).filter(Line.ean == ean, Line.session_id == session_id).first()
+    else:
+        raise HTTPException(status_code=400, detail="line_id or ean is required")
+    
+    if not line:
+        raise HTTPException(status_code=404, detail="Line not found")
+    
+    if line.picked_qty <= 0:
+        raise HTTPException(status_code=400, detail="Cannot undo: picked quantity is already 0")
+    
+    old_picked_qty = line.picked_qty
+    line.picked_qty -= 1
+    
+    if line.picked_qty >= line.expected_qty:
+        line.status = "completed"
+    elif line.picked_qty > 0:
+        line.status = "in_progress"
+    else:
+        line.status = "pending"
+    
+    db.commit()
+    db.refresh(line)
+    
+    event = Event(
+        session_id=session_id,
+        user_id=current_user.id,
+        type="scan_undone",
+        payload={
+            "line_id": str(line.id),
+            "ean": line.ean,
+            "old_picked_qty": old_picked_qty,
+            "new_picked_qty": line.picked_qty
+        }
+    )
+    db.add(event)
+    db.commit()
+    
+    return {
+        "message": "Escaneo deshecho correctamente",
+        "line": {
+            "id": str(line.id),
+            "ean": line.ean,
+            "expected_qty": line.expected_qty,
+            "picked_qty": line.picked_qty,
+            "status": line.status
+        }
+    }
+
+@app.get("/sessions/{session_id}/participants")
+async def get_session_participants(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all users who participated in a picking session"""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session.user_id != current_user.id and current_user.role not in ["admin", "supervisor"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    events = db.query(Event).filter(Event.session_id == session_id).all()
+    
+    participant_data = {}
+    
+    starter_user = db.query(User).filter(User.id == session.user_id).first()
+    if starter_user:
+        participant_data[str(starter_user.id)] = {
+            "id": str(starter_user.id),
+            "username": starter_user.username,
+            "role": starter_user.role,
+            "is_starter": True,
+            "first_action": session.started_at.isoformat() if session.started_at else None,
+            "last_action": session.started_at.isoformat() if session.started_at else None,
+            "actions_count": 0
+        }
+    
+    for event in events:
+        user_id = str(event.user_id)
+        if user_id not in participant_data:
+            user = db.query(User).filter(User.id == event.user_id).first()
+            if user:
+                participant_data[user_id] = {
+                    "id": user_id,
+                    "username": user.username,
+                    "role": user.role,
+                    "is_starter": False,
+                    "first_action": event.created_at.isoformat() if event.created_at else None,
+                    "last_action": event.created_at.isoformat() if event.created_at else None,
+                    "actions_count": 0
+                }
+        
+        if user_id in participant_data:
+            participant_data[user_id]["actions_count"] += 1
+            if event.created_at:
+                event_time = event.created_at.isoformat()
+                if participant_data[user_id]["first_action"] is None or event_time < participant_data[user_id]["first_action"]:
+                    participant_data[user_id]["first_action"] = event_time
+                if participant_data[user_id]["last_action"] is None or event_time > participant_data[user_id]["last_action"]:
+                    participant_data[user_id]["last_action"] = event_time
+    
+    return list(participant_data.values())
+
 @app.get("/admin/config")
 async def get_system_config(
     current_user: User = Depends(get_current_user),
