@@ -18,6 +18,8 @@ import {
   ListItemText,
   Chip,
   IconButton,
+  Divider,
+  InputAdornment,
 } from '@mui/material'
 import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
@@ -28,10 +30,15 @@ import {
   ArrowBack,
   Upload,
   Print,
+  Add,
+  Remove,
+  Search,
+  Delete,
+  PersonOutline,
+  Group,
 } from '@mui/icons-material'
 import CameraScanner from './CameraScanner'
 import QRLabel from './QRLabel'
-import ProductLineItem from './ProductLineItem'
 
 interface Session {
   id: string
@@ -41,21 +48,35 @@ interface Session {
 }
 
 interface ProductLine {
-  id: string
+  item_id: number | string
   product_id: number
   ean: string
-  expected_qty: number
+  sku: string
+  name: string
+  quantity: number
   picked_qty: number
-  status: string
-  product_name: string
-  image_url?: string
+  backorder: number
+  picking_status: string
+  image?: string
+  is_manual?: boolean
+  added_by?: string
+  added_at?: string
+  reason?: string
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+interface SearchProduct {
+  product_id: number
+  name: string
+  sku: string
+  ean: string
+  price: number
+  stock_quantity: number | null
+  image: string
+}
 
 function PickingSession() {
-  const { sessionId } = useParams<{ sessionId: string }>()
-  const [session, setSession] = useState<Session | null>(null)
+  const { sessionId, orderId } = useParams<{ sessionId?: string; orderId?: string }>()
+  const [_session, setSession] = useState<Session | null>(null)
   const [productLines, setProductLines] = useState<ProductLine[]>([])
   const [scanValue, setScanValue] = useState('')
   const [loading, setLoading] = useState(true)
@@ -72,42 +93,100 @@ function PickingSession() {
   const [showQRLabel, setShowQRLabel] = useState(false)
   const [qrLabelData, setQrLabelData] = useState<any>(null)
   const navigate = useNavigate()
+  
+  // New state for manual product addition
+  const [addProductDialog, setAddProductDialog] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<SearchProduct[]>([])
+  const [searching, setSearching] = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState<SearchProduct | null>(null)
+  const [manualQty, setManualQty] = useState(1)
+  const [manualReason, setManualReason] = useState('')
+  const [addingProduct, setAddingProduct] = useState(false)
+  
+  // User tracking state
+  const [pickingStartedBy, setPickingStartedBy] = useState('')
+  const [pickingUsers, setPickingUsers] = useState<string[]>([])
+  
+  // Quantity modification state
+  const [updatingQty, setUpdatingQty] = useState<string | number | null>(null)
+
+  // Get store config from localStorage
+  const storeUrl = localStorage.getItem('store_url') || ''
+  const apiKey = localStorage.getItem('api_key') || ''
+  const pickerName = localStorage.getItem('picker_name') || ''
+  
+  // Use orderId from URL params (from /picking/:orderId route) or sessionId
+  const currentOrderId = orderId || sessionId
 
   useEffect(() => {
-    if (sessionId) {
-      fetchSession()
-      fetchSessionLines()
+    if (currentOrderId) {
+      fetchOrderProducts()
     }
-  }, [sessionId])
+  }, [currentOrderId])
 
-  const fetchSession = async () => {
+  const fetchOrderProducts = async () => {
     try {
-      setSession({
-        id: sessionId!,
-        order_id: 123,
-        status: 'in_progress',
-        started_at: new Date().toISOString(),
+      const response = await axios.get(`${storeUrl}/wp-json/picking/v1/get-order-products`, {
+        params: {
+          token: apiKey,
+          order_id: currentOrderId,
+          appuser: pickerName
+        }
       })
-    } catch (err) {
-      setError('Error al cargar la sesión')
+      
+      const data = response.data
+      
+      // Set session info
+      setSession({
+        id: currentOrderId!,
+        order_id: data.order_id,
+        status: data.picking_status || 'picking',
+        started_at: data.picking_started_at || new Date().toISOString(),
+      })
+      
+      // Transform products to ProductLine format
+      const lines: ProductLine[] = (data.products || []).map((p: any) => ({
+        item_id: p.item_id || p.product_id,
+        product_id: p.product_id,
+        ean: p.ean || '',
+        sku: p.sku || '',
+        name: p.name,
+        quantity: p.quantity || 1,
+        picked_qty: p.picked_qty || 0,
+        backorder: p.backorder || 0,
+        picking_status: p.picking_status || 'pending',
+        image: p.image,
+        is_manual: p.is_manual || false,
+        added_by: p.added_by || '',
+        added_at: p.added_at || '',
+        reason: p.reason || '',
+      }))
+      
+      setProductLines(lines)
+      
+      // Set user tracking info
+      setPickingStartedBy(data.picking_started_by || data.user_claimed || '')
+      setPickingUsers(data.picking_users || [])
+      
+      // Calculate progress
+      const totalExpected = lines.reduce((sum: number, line: ProductLine) => sum + line.quantity, 0)
+      const totalPicked = lines.reduce((sum: number, line: ProductLine) => sum + line.picked_qty, 0)
+      setProgress(totalExpected > 0 ? (totalPicked / totalExpected) * 100 : 0)
+    } catch (err: any) {
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        setError('Sesión expirada o usuario inactivo. Por favor, inicie sesión de nuevo.')
+        // Clear auth and redirect to login
+        localStorage.removeItem('user_logged_in')
+        localStorage.removeItem('picking_user')
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 2000)
+      } else {
+        setError('Error al cargar los productos del pedido')
+      }
     } finally {
       setLoading(false)
-    }
-  }
-
-  const fetchSessionLines = async () => {
-    try {
-      const token = localStorage.getItem('token')
-      const response = await axios.get(`${API_BASE_URL}/sessions/${sessionId}/lines`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      setProductLines(response.data)
-      
-      const totalExpected = response.data.reduce((sum: number, line: ProductLine) => sum + line.expected_qty, 0)
-      const totalPicked = response.data.reduce((sum: number, line: ProductLine) => sum + line.picked_qty, 0)
-      setProgress(totalExpected > 0 ? (totalPicked / totalExpected) * 100 : 0)
-    } catch (err) {
-      console.error('Error fetching session lines:', err)
     }
   }
 
@@ -120,18 +199,28 @@ function PickingSession() {
     setSuccess('')
 
     try {
-      const token = localStorage.getItem('token')
-      await axios.post(`${API_BASE_URL}/sessions/${sessionId}/scan`, {
+      await axios.post(`${storeUrl}/wp-json/picking/v1/scan-product`, {
+        order_id: currentOrderId,
         ean: eanToScan,
+        appuser: pickerName,
       }, {
-        headers: { Authorization: `Bearer ${token}` }
+        params: { token: apiKey }
       })
       setSuccess(`Producto escaneado: ${eanToScan}`)
       setScanValue('')
       
-      await fetchSessionLines()
+      await fetchOrderProducts()
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error al escanear producto')
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        setError('Sesión expirada o usuario inactivo. Por favor, inicie sesión de nuevo.')
+        localStorage.removeItem('user_logged_in')
+        localStorage.removeItem('picking_user')
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 2000)
+      } else {
+        setError(err.response?.data?.message || 'Error al escanear producto')
+      }
     } finally {
       setScanning(false)
     }
@@ -151,25 +240,33 @@ function PickingSession() {
 
     try {
       const formData = new FormData()
-      formData.append('file', file)
-      const token = localStorage.getItem('token')
+      formData.append('photo', file)
+      formData.append('order_id', currentOrderId || '')
+      formData.append('appuser', pickerName)
 
       const response = await axios.post(
-        `${API_BASE_URL}/sessions/${sessionId}/photo`,
+        `${storeUrl}/wp-json/picking/v1/upload-photo`,
         formData,
         {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-            'Authorization': `Bearer ${token}`
-          },
+          params: { token: apiKey },
+          // Let axios set Content-Type automatically for proper multipart boundary
         }
       )
 
-      setPhotos(prev => [...prev, response.data.url])
+      setPhotos(prev => [...prev, response.data.url || response.data.photo_url || 'uploaded'])
       setSuccess('Foto subida correctamente')
       setPhotoDialog(false)
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error al subir foto')
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        setError('Sesión expirada o usuario inactivo. Por favor, inicie sesión de nuevo.')
+        localStorage.removeItem('user_logged_in')
+        localStorage.removeItem('picking_user')
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 2000)
+      } else {
+        setError(err.response?.data?.message || 'Error al subir foto')
+      }
     } finally {
       setUploading(false)
     }
@@ -185,29 +282,159 @@ function PickingSession() {
     setError('')
 
     try {
-      const token = localStorage.getItem('token')
-      await axios.post(`${API_BASE_URL}/sessions/${sessionId}/finish`, {
+      // Complete the picking session via plugin API
+      await axios.post(`${storeUrl}/wp-json/picking/v1/complete-order`, {
+        order_id: currentOrderId,
+        appuser: pickerName,
         notes: 'Sesión completada desde la app móvil',
       }, {
-        headers: { Authorization: `Bearer ${token}` }
+        params: { token: apiKey }
       })
       
+      // Try to get QR label data
       try {
-        const qrResponse = await axios.get(`${API_BASE_URL}/api/orders/${session?.order_id}/qr-label`, {
-          headers: { Authorization: `Bearer ${token}` }
+        const qrResponse = await axios.get(`${storeUrl}/wp-json/picking/v1/get-qr-label`, {
+          params: {
+            token: apiKey,
+            order_id: currentOrderId,
+          }
         })
         setQrLabelData(qrResponse.data)
         setShowQRLabel(true)
       } catch (qrError) {
         console.error('Error generating QR label:', qrError)
+        // Continue even if QR label fails
       }
       
       setSuccess('Sesión finalizada correctamente')
       setFinishDialog(false)
+      
+      // Navigate back to orders after a delay if no QR label
+      if (!showQRLabel) {
+        setTimeout(() => navigate('/orders'), 2000)
+      }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error al finalizar sesión')
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        setError('Sesión expirada o usuario inactivo. Por favor, inicie sesión de nuevo.')
+        localStorage.removeItem('user_logged_in')
+        localStorage.removeItem('picking_user')
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 2000)
+      } else {
+        setError(err.response?.data?.message || 'Error al finalizar sesión')
+      }
     } finally {
       setFinishing(false)
+    }
+  }
+
+  // Search products for manual addition
+  const handleSearchProducts = async () => {
+    if (searchQuery.length < 2) return
+    
+    setSearching(true)
+    setError('')
+    
+    try {
+      const response = await axios.get(`${storeUrl}/wp-json/picking/v1/search-products`, {
+        params: {
+          token: apiKey,
+          query: searchQuery,
+          limit: 10,
+        }
+      })
+      
+      setSearchResults(response.data.products || [])
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Error al buscar productos')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  // Add manual product to picking session
+  const handleAddManualProduct = async () => {
+    if (!selectedProduct) return
+    
+    setAddingProduct(true)
+    setError('')
+    
+    try {
+      await axios.post(`${storeUrl}/wp-json/picking/v1/add-manual-item`, {
+        order_id: currentOrderId,
+        product_id: selectedProduct.product_id,
+        qty: manualQty,
+        appuser: pickerName,
+        reason: manualReason,
+      }, {
+        params: { token: apiKey }
+      })
+      
+      setSuccess(`Producto agregado: ${selectedProduct.name}`)
+      setAddProductDialog(false)
+      setSelectedProduct(null)
+      setSearchQuery('')
+      setSearchResults([])
+      setManualQty(1)
+      setManualReason('')
+      
+      await fetchOrderProducts()
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Error al agregar producto')
+    } finally {
+      setAddingProduct(false)
+    }
+  }
+
+  // Update picked quantity for a line item
+  const handleUpdateQuantity = async (itemId: string | number, newQty: number) => {
+    if (newQty < 0) return
+    
+    setUpdatingQty(itemId)
+    setError('')
+    
+    try {
+      await axios.post(`${storeUrl}/wp-json/picking/v1/update-line-picking`, {
+        order_id: currentOrderId,
+        item_id: itemId,
+        picked_qty: newQty,
+        appuser: pickerName,
+      }, {
+        params: { token: apiKey }
+      })
+      
+      await fetchOrderProducts()
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Error al actualizar cantidad')
+    } finally {
+      setUpdatingQty(null)
+    }
+  }
+
+  // Remove/reset a line item
+  const handleRemoveItem = async (itemId: string | number, isManual: boolean) => {
+    setError('')
+    
+    try {
+      if (isManual) {
+        await axios.post(`${storeUrl}/wp-json/picking/v1/remove-manual-item`, {
+          order_id: currentOrderId,
+          item_id: itemId,
+          appuser: pickerName,
+          reason: 'Retirado por el picker',
+        }, {
+          params: { token: apiKey }
+        })
+        setSuccess('Producto manual retirado')
+      } else {
+        await handleUpdateQuantity(itemId, 0)
+        setSuccess('Cantidad reiniciada a 0')
+      }
+      
+      await fetchOrderProducts()
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Error al retirar producto')
     }
   }
 
@@ -246,6 +473,30 @@ function PickingSession() {
         </Alert>
       )}
 
+      {/* User tracking info */}
+      {(pickingStartedBy || pickingUsers.length > 0) && (
+        <Card sx={{ mb: 3, bgcolor: 'grey.50' }}>
+          <CardContent sx={{ py: 1.5 }}>
+            {pickingStartedBy && (
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: pickingUsers.length > 0 ? 1 : 0 }}>
+                <PersonOutline sx={{ mr: 1, color: 'primary.main' }} />
+                <Typography variant="body2">
+                  <strong>Iniciado por:</strong> {pickingStartedBy}
+                </Typography>
+              </Box>
+            )}
+            {pickingUsers.length > 0 && (
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Group sx={{ mr: 1, color: 'secondary.main' }} />
+                <Typography variant="body2">
+                  <strong>Trabajado por:</strong> {pickingUsers.join(', ')}
+                </Typography>
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Typography variant="h6" gutterBottom>
@@ -257,20 +508,88 @@ function PickingSession() {
             sx={{ mb: 2, height: 8, borderRadius: 4 }}
           />
           <Typography variant="body2" color="text.secondary">
-            {Math.round(progress)}% completado ({productLines.filter(line => line.picked_qty >= line.expected_qty).length} de {productLines.length} productos)
+            {Math.round(progress)}% completado ({productLines.filter(line => line.picked_qty >= line.quantity).length} de {productLines.length} productos)
           </Typography>
         </CardContent>
       </Card>
 
-      <Typography variant="h6" gutterBottom sx={{ mt: 3, mb: 2 }}>
-        Productos a Recoger
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 3, mb: 2 }}>
+        <Typography variant="h6">
+          Productos a Recoger
+        </Typography>
+        <Button
+          variant="outlined"
+          startIcon={<Add />}
+          onClick={() => setAddProductDialog(true)}
+          size="small"
+        >
+          Agregar Producto
+        </Button>
+      </Box>
       
       {productLines.map((line) => (
-        <ProductLineItem
-          key={line.id}
-          line={line}
-        />
+        <Card key={line.item_id} sx={{ mb: 2 }}>
+          <CardContent sx={{ pb: 1 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                  {line.name}
+                  {line.is_manual && (
+                    <Chip label="Manual" size="small" color="info" sx={{ ml: 1 }} />
+                  )}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  SKU: {line.sku} {line.ean && `| EAN: ${line.ean}`}
+                </Typography>
+                {line.is_manual && line.added_by && (
+                  <Typography variant="caption" color="text.secondary">
+                    Agregado por: {line.added_by}
+                  </Typography>
+                )}
+              </Box>
+              <IconButton
+                size="small"
+                color="error"
+                onClick={() => handleRemoveItem(line.item_id, line.is_manual || false)}
+                title={line.is_manual ? "Retirar producto" : "Reiniciar cantidad"}
+              >
+                <Delete />
+              </IconButton>
+            </Box>
+            
+            <Divider sx={{ my: 1.5 }} />
+            
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Typography variant="body2">
+                {line.picked_qty} de {line.quantity} recogidos
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <IconButton
+                  size="small"
+                  onClick={() => handleUpdateQuantity(line.item_id, Math.max(0, line.picked_qty - 1))}
+                  disabled={updatingQty === line.item_id || line.picked_qty <= 0}
+                >
+                  <Remove />
+                </IconButton>
+                <Typography variant="h6" sx={{ minWidth: 30, textAlign: 'center' }}>
+                  {updatingQty === line.item_id ? <CircularProgress size={20} /> : line.picked_qty}
+                </Typography>
+                <IconButton
+                  size="small"
+                  onClick={() => handleUpdateQuantity(line.item_id, line.picked_qty + 1)}
+                  disabled={updatingQty === line.item_id}
+                  color={line.picked_qty >= line.quantity ? 'default' : 'primary'}
+                >
+                  <Add />
+                </IconButton>
+              </Box>
+            </Box>
+            
+            {line.picked_qty >= line.quantity && (
+              <Chip label="Completado" color="success" size="small" sx={{ mt: 1 }} />
+            )}
+          </CardContent>
+        </Card>
       ))}
 
       <Card sx={{ mb: 3 }}>
@@ -452,6 +771,132 @@ function PickingSession() {
             color="primary"
           >
             Continuar
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Manual Product Addition Dialog */}
+      <Dialog 
+        open={addProductDialog} 
+        onClose={() => {
+          setAddProductDialog(false)
+          setSelectedProduct(null)
+          setSearchQuery('')
+          setSearchResults([])
+          setManualQty(1)
+          setManualReason('')
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Agregar Producto Manualmente</DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 1 }}>
+            <TextField
+              fullWidth
+              label="Buscar por SKU, EAN o Nombre"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleSearchProducts()}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton onClick={handleSearchProducts} disabled={searching || searchQuery.length < 2}>
+                      {searching ? <CircularProgress size={20} /> : <Search />}
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              }}
+              sx={{ mb: 2 }}
+            />
+            
+            {searchResults.length > 0 && !selectedProduct && (
+              <List sx={{ maxHeight: 200, overflow: 'auto', border: '1px solid #ddd', borderRadius: 1 }}>
+                {searchResults.map((product) => (
+                  <ListItem
+                    key={product.product_id}
+                    component="div"
+                    onClick={() => setSelectedProduct(product)}
+                    sx={{ 
+                      cursor: 'pointer',
+                      '&:hover': { bgcolor: 'action.hover' }
+                    }}
+                  >
+                    <ListItemText
+                      primary={product.name}
+                      secondary={`SKU: ${product.sku} ${product.ean ? `| EAN: ${product.ean}` : ''}`}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            )}
+            
+            {selectedProduct && (
+              <Card sx={{ mb: 2, bgcolor: 'primary.light', color: 'primary.contrastText' }}>
+                <CardContent sx={{ py: 1.5 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                    {selectedProduct.name}
+                  </Typography>
+                  <Typography variant="body2">
+                    SKU: {selectedProduct.sku} {selectedProduct.ean && `| EAN: ${selectedProduct.ean}`}
+                  </Typography>
+                  <Button 
+                    size="small" 
+                    onClick={() => setSelectedProduct(null)}
+                    sx={{ mt: 1, color: 'inherit' }}
+                  >
+                    Cambiar producto
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+            
+            {selectedProduct && (
+              <>
+                <TextField
+                  fullWidth
+                  type="number"
+                  label="Cantidad"
+                  value={manualQty}
+                  onChange={(e) => setManualQty(Math.max(1, parseInt(e.target.value) || 1))}
+                  inputProps={{ min: 1 }}
+                  sx={{ mb: 2 }}
+                />
+                
+                <TextField
+                  fullWidth
+                  label="Motivo (opcional)"
+                  value={manualReason}
+                  onChange={(e) => setManualReason(e.target.value)}
+                  placeholder="Ej: Cambio de última hora, producto adicional..."
+                  multiline
+                  rows={2}
+                />
+              </>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => {
+              setAddProductDialog(false)
+              setSelectedProduct(null)
+              setSearchQuery('')
+              setSearchResults([])
+              setManualQty(1)
+              setManualReason('')
+            }}
+            disabled={addingProduct}
+          >
+            Cancelar
+          </Button>
+          <Button
+            onClick={handleAddManualProduct}
+            variant="contained"
+            disabled={!selectedProduct || addingProduct}
+            startIcon={addingProduct ? <CircularProgress size={20} /> : <Add />}
+          >
+            {addingProduct ? 'Agregando...' : 'Agregar Producto'}
           </Button>
         </DialogActions>
       </Dialog>

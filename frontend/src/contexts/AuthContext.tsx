@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
-import axios from 'axios'
 import { offlineManager } from '../utils/offlineStorage'
-import { deviceLockManager } from '../utils/deviceLock'
 
 interface User {
   id: string
@@ -9,46 +7,53 @@ interface User {
   role: string
 }
 
+interface Permissions {
+  can_view_all_orders: boolean
+  can_process_orders: boolean
+  can_view_stats: boolean
+  can_manage_users: boolean
+  can_view_dashboard: boolean
+}
+
 interface AuthContextType {
   user: User | null
+  permissions: Permissions | null
   token: string | null
-  login: (username: string, password: string) => Promise<void>
   logout: () => void
   loading: boolean
   isOffline: boolean
-  deviceId: string | null
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
+  const [permissions, setPermissions] = useState<Permissions | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [isOffline, setIsOffline] = useState(!navigator.onLine)
-  const [deviceId, setDeviceId] = useState<string | null>(null)
 
   useEffect(() => {
-    const initializeAuth = async () => {
-      const storedToken = localStorage.getItem('token')
-      if (storedToken) {
-        setToken(storedToken)
-        axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`
-        const userData = localStorage.getItem('user')
-        if (userData) {
-          const parsedUser = JSON.parse(userData)
-          setUser(parsedUser)
-          
-          const deviceIdValue = await deviceLockManager.getDeviceId()
-          setDeviceId(deviceIdValue)
-          
-          const isAuthorized = await deviceLockManager.isDeviceAuthorized(parsedUser.id)
-          if (!isAuthorized) {
-            await deviceLockManager.authorizeDevice(parsedUser.id)
-          }
-        }
+    const initializeAuth = () => {
+      const pickingUser = localStorage.getItem('picking_user')
+      const pickingPermissions = localStorage.getItem('picking_permissions')
+      const apiKey = localStorage.getItem('api_key')
+      
+      if (pickingUser) {
+        const parsedUser = JSON.parse(pickingUser)
+        setUser({
+          id: parsedUser.id,
+          username: parsedUser.name,
+          role: parsedUser.role
+        })
+      }
+      
+      if (pickingPermissions) {
+        setPermissions(JSON.parse(pickingPermissions))
+      }
+      
+      if (apiKey) {
+        setToken(apiKey)
       }
       
       const handleOnline = () => {
@@ -74,55 +79,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initializeAuth()
   }, [])
 
-  const login = async (username: string, password: string) => {
-    try {
-      const isDeviceValid = await deviceLockManager.validateDeviceIntegrity()
-      if (!isDeviceValid && localStorage.getItem('device_id')) {
-        console.warn('Device fingerprint changed - clearing device data')
-        deviceLockManager.clearDeviceData()
-      }
-      
-      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, {
-        username,
-        password,
-      })
-      
-      const { access_token, user } = response.data
-      localStorage.setItem('token', access_token)
-      setToken(access_token)
-      axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`
-      
-      const userData = { 
-        id: user.id, 
-        username: user.username, 
-        role: user.role
-      }
-      localStorage.setItem('user', JSON.stringify(userData))
-      setUser(userData)
-      
-      const deviceIdValue = await deviceLockManager.getDeviceId()
-      setDeviceId(deviceIdValue)
-      await deviceLockManager.authorizeDevice(user.id)
-      
-    } catch (error) {
-      if (offlineManager.isOffline()) {
-        throw new Error('Sin conexión - no se puede autenticar')
-      }
-      throw new Error('Credenciales inválidas')
-    }
-  }
-
   const logout = () => {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user')
-    delete axios.defaults.headers.common['Authorization']
+    localStorage.removeItem('picking_user')
+    localStorage.removeItem('picking_permissions')
+    localStorage.removeItem('user_logged_in')
+    localStorage.removeItem('connected')
+    localStorage.removeItem('store_url')
+    localStorage.removeItem('api_key')
+    localStorage.removeItem('store_name')
+    localStorage.removeItem('picker_name')
     setUser(null)
+    setPermissions(null)
     setToken(null)
-    setDeviceId(null)
+    window.location.href = '/'
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, loading, isOffline, deviceId }}>
+    <AuthContext.Provider value={{ user, permissions, token, logout, loading, isOffline }}>
       {children}
     </AuthContext.Provider>
   )

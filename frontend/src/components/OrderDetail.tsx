@@ -29,20 +29,25 @@ interface Order {
   id: number
   number: string
   status: string
+  pickingStatus: string
+  availableForPicking: boolean
+  availabilityReasonText: string
   total: string
   customer_name: string
   line_items: LineItem[]
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-
 function OrderDetail() {
   const { orderId } = useParams<{ orderId: string }>()
   const [order, setOrder] = useState<Order | null>(null)
   const [loading, setLoading] = useState(true)
-  const [startingSession, setStartingSession] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
+
+  // Get store config from localStorage
+  const storeUrl = localStorage.getItem('store_url') || ''
+  const apiKey = localStorage.getItem('api_key') || ''
+  const pickerName = localStorage.getItem('picker_name') || ''
 
   useEffect(() => {
     if (orderId) {
@@ -52,13 +57,33 @@ function OrderDetail() {
 
   const fetchOrder = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await axios.get(`${API_BASE_URL}/api/orders/${orderId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`
+      const response = await axios.get(`${storeUrl}/wp-json/picking/v1/get-order-products`, {
+        params: {
+          token: apiKey,
+          order_id: orderId,
+          appuser: pickerName
         }
       })
-      setOrder(response.data)
+      
+      // Transform the response to match the expected Order interface
+      const data = response.data
+      setOrder({
+        id: data.order_id,
+        number: data.order_number || String(data.order_id),
+        status: data.status || 'processing',
+        pickingStatus: data.picking_status || 'pending',
+        availableForPicking: data.available_for_picking ?? true,
+        availabilityReasonText: data.availability_reason_text || '',
+        total: data.total || '0',
+        customer_name: data.customer?.name || 'Cliente',
+        line_items: (data.products || []).map((p: any) => ({
+          id: p.item_id || p.product_id,
+          name: p.name,
+          sku: p.sku || '',
+          quantity: p.quantity || 1,
+          product_id: p.product_id
+        }))
+      })
     } catch (err) {
       setError('Error al cargar el pedido')
     } finally {
@@ -69,20 +94,8 @@ function OrderDetail() {
   const startPickingSession = async () => {
     if (!orderId) return
     
-    setStartingSession(true)
-    try {
-      const token = localStorage.getItem('token')
-      const response = await axios.post(`${API_BASE_URL}/api/orders/${orderId}/start`, {}, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      })
-      navigate(`/sessions/${response.data.id}`)
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error al iniciar la sesión de picking')
-    } finally {
-      setStartingSession(false)
-    }
+    // Navigate directly to picking session - the order is already claimed when we fetched it
+    navigate(`/picking/${orderId}`)
   }
 
   const getStatusColor = (status: string) => {
@@ -205,17 +218,17 @@ function OrderDetail() {
         variant="contained"
         size="large"
         fullWidth
-        startIcon={startingSession ? <CircularProgress size={20} /> : <PlayArrow />}
+        startIcon={<PlayArrow />}
         onClick={startPickingSession}
-        disabled={startingSession || order.status !== 'processing'}
+        disabled={!order.availableForPicking}
         sx={{ py: 2 }}
       >
-        {startingSession ? 'Iniciando...' : 'Iniciar Picking'}
+        Iniciar Picking
       </Button>
 
-      {order.status !== 'processing' && (
+      {!order.availableForPicking && (
         <Alert severity="info" sx={{ mt: 2 }}>
-          Este pedido no está disponible para picking
+          {order.availabilityReasonText || 'Este pedido no está disponible para picking'}
         </Alert>
       )}
     </Box>
