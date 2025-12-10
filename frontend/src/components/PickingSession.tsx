@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   Card,
   CardContent,
@@ -28,7 +28,6 @@ import {
   PhotoCamera,
   CheckCircle,
   ArrowBack,
-  Upload,
   Print,
   Add,
   Remove,
@@ -36,9 +35,14 @@ import {
   Delete,
   PersonOutline,
   Group,
+  Videocam,
+  PlayArrow,
+  Close,
+  Inventory,
 } from '@mui/icons-material'
 import CameraScanner from './CameraScanner'
 import QRLabel from './QRLabel'
+import { useAlert } from '../contexts/AlertContext'
 
 interface Session {
   id: string
@@ -65,6 +69,7 @@ interface ProductLine {
   added_by?: string
   added_at?: string
   reason?: string
+  stock_quantity?: number | null
 }
 
 interface SearchProduct {
@@ -75,6 +80,13 @@ interface SearchProduct {
   price: number
   stock_quantity: number | null
   image: string
+}
+
+interface EvidenceItem {
+  url: string
+  type: 'photo' | 'video'
+  uploaded_by?: string
+  uploaded_at?: string
 }
 
 function PickingSession() {
@@ -91,11 +103,19 @@ function PickingSession() {
   const [photoDialog, setPhotoDialog] = useState(false)
   const [finishDialog, setFinishDialog] = useState(false)
   const [photos, setPhotos] = useState<string[]>([])
+  const [evidence, setEvidence] = useState<EvidenceItem[]>([])
   const [progress, setProgress] = useState(0)
   const [scannerOpen, setScannerOpen] = useState(false)
   const [showQRLabel, setShowQRLabel] = useState(false)
   const [qrLabelData, setQrLabelData] = useState<any>(null)
+  const [videoPlayerOpen, setVideoPlayerOpen] = useState(false)
+  const [currentVideoUrl, setCurrentVideoUrl] = useState('')
+  const [isRecordingVideo, setIsRecordingVideo] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
   const navigate = useNavigate()
+  const { showError, showWarning, showSuccess } = useAlert()
   
   // New state for manual product addition
   const [addProductDialog, setAddProductDialog] = useState(false)
@@ -153,6 +173,9 @@ function PickingSession() {
         item_id: p.item_id || p.product_id,
         product_id: p.product_id,
         ean: p.ean || '',
+        ian: p.ian || '',
+        cnd: p.cnd || '',
+        gtin: p.gtin || '',
         sku: p.sku || '',
         name: p.name,
         quantity: p.quantity || 1,
@@ -164,9 +187,24 @@ function PickingSession() {
         added_by: p.added_by || '',
         added_at: p.added_at || '',
         reason: p.reason || '',
+        stock_quantity: p.stock_quantity,
       }))
       
       setProductLines(lines)
+      
+      // Check for inventory issues and show warnings
+      const zeroStockProducts = lines.filter((l: ProductLine) => l.stock_quantity === 0)
+      const insufficientStockProducts = lines.filter((l: ProductLine) => 
+        l.stock_quantity !== null && l.stock_quantity !== undefined && l.stock_quantity > 0 && l.stock_quantity < l.quantity
+      )
+      
+      if (zeroStockProducts.length > 0) {
+        const productNames = zeroStockProducts.map((p: ProductLine) => p.name).join(', ')
+        showError('Sin Stock', `Los siguientes productos no tienen inventario disponible: ${productNames}`)
+      } else if (insufficientStockProducts.length > 0) {
+        const productNames = insufficientStockProducts.map((p: ProductLine) => p.name).join(', ')
+        showWarning('Inventario Insuficiente', `Los siguientes productos tienen menos unidades disponibles que las solicitadas: ${productNames}`)
+      }
       
       // Set user tracking info
       setPickingStartedBy(data.picking_started_by || data.user_claimed || '')
@@ -178,15 +216,13 @@ function PickingSession() {
       setProgress(totalExpected > 0 ? (totalPicked / totalExpected) * 100 : 0)
     } catch (err: any) {
       if (err.response?.status === 401 || err.response?.status === 403) {
-        setError('Sesión expirada o usuario inactivo. Por favor, inicie sesión de nuevo.')
-        // Clear auth and redirect to login
-        localStorage.removeItem('user_logged_in')
-        localStorage.removeItem('picking_user')
-        setTimeout(() => {
+        showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
+          localStorage.removeItem('user_logged_in')
+          localStorage.removeItem('picking_user')
           window.location.href = '/'
-        }, 2000)
+        })
       } else {
-        setError('Error al cargar los productos del pedido')
+        showError('Error', 'Error al cargar los productos del pedido')
       }
     } finally {
       setLoading(false)
@@ -209,20 +245,23 @@ function PickingSession() {
       }, {
         params: { token: apiKey }
       })
-      setSuccess(`Producto escaneado: ${eanToScan}`)
+      showSuccess('Producto Escaneado', `Codigo: ${eanToScan}`)
       setScanValue('')
       
       await fetchOrderProducts()
     } catch (err: any) {
       if (err.response?.status === 401 || err.response?.status === 403) {
-        setError('Sesión expirada o usuario inactivo. Por favor, inicie sesión de nuevo.')
-        localStorage.removeItem('user_logged_in')
-        localStorage.removeItem('picking_user')
-        setTimeout(() => {
+        showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
+          localStorage.removeItem('user_logged_in')
+          localStorage.removeItem('picking_user')
           window.location.href = '/'
-        }, 2000)
+        })
+      } else if (err.response?.status === 404) {
+        showError('Producto No Encontrado', 'El codigo escaneado no corresponde a ningun producto de este pedido.')
+      } else if (err.response?.status === 400 && err.response?.data?.code === 'already_picked') {
+        showWarning('Producto Completado', 'Este producto ya ha sido escaneado completamente.')
       } else {
-        setError(err.response?.data?.message || 'Error al escanear producto')
+        showError('Error de Escaneo', err.response?.data?.message || 'Error al escanear producto')
       }
     } finally {
       setScanning(false)
@@ -261,14 +300,13 @@ function PickingSession() {
       setPhotoDialog(false)
     } catch (err: any) {
       if (err.response?.status === 401 || err.response?.status === 403) {
-        setError('Sesión expirada o usuario inactivo. Por favor, inicie sesión de nuevo.')
-        localStorage.removeItem('user_logged_in')
-        localStorage.removeItem('picking_user')
-        setTimeout(() => {
+        showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
+          localStorage.removeItem('user_logged_in')
+          localStorage.removeItem('picking_user')
           window.location.href = '/'
-        }, 2000)
+        })
       } else {
-        setError(err.response?.data?.message || 'Error al subir foto')
+        showError('Error de Subida', err.response?.data?.message || 'Error al subir el archivo')
       }
     } finally {
       setUploading(false)
@@ -276,8 +314,8 @@ function PickingSession() {
   }
 
   const handleFinishSession = async () => {
-    if (photos.length === 0) {
-      setError('Debe subir al menos una foto antes de finalizar')
+    if (photos.length === 0 && evidence.length === 0) {
+      showWarning('Evidencia Requerida', 'Debe subir al menos una foto o video antes de finalizar el pedido.')
       return
     }
 
@@ -318,14 +356,13 @@ function PickingSession() {
       }
     } catch (err: any) {
       if (err.response?.status === 401 || err.response?.status === 403) {
-        setError('Sesión expirada o usuario inactivo. Por favor, inicie sesión de nuevo.')
-        localStorage.removeItem('user_logged_in')
-        localStorage.removeItem('picking_user')
-        setTimeout(() => {
+        showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
+          localStorage.removeItem('user_logged_in')
+          localStorage.removeItem('picking_user')
           window.location.href = '/'
-        }, 2000)
+        })
       } else {
-        setError(err.response?.data?.message || 'Error al finalizar sesión')
+        showError('Error', err.response?.data?.message || 'Error al finalizar sesion')
       }
     } finally {
       setFinishing(false)
@@ -350,7 +387,7 @@ function PickingSession() {
       
       setSearchResults(response.data.products || [])
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Error al buscar productos')
+      showError('Error de Busqueda', err.response?.data?.message || 'Error al buscar productos')
     } finally {
       setSearching(false)
     }
@@ -374,7 +411,7 @@ function PickingSession() {
         params: { token: apiKey }
       })
       
-      setSuccess(`Producto agregado: ${selectedProduct.name}`)
+      showSuccess('Producto Agregado', `${selectedProduct.name} ha sido agregado al pedido.`)
       setAddProductDialog(false)
       setSelectedProduct(null)
       setSearchQuery('')
@@ -384,7 +421,7 @@ function PickingSession() {
       
       await fetchOrderProducts()
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Error al agregar producto')
+      showError('Error', err.response?.data?.message || 'Error al agregar producto')
     } finally {
       setAddingProduct(false)
     }
@@ -397,7 +434,7 @@ function PickingSession() {
     // Find the product line to check the maximum allowed quantity
     const line = productLines.find(l => l.item_id === itemId)
     if (line && newQty > line.quantity) {
-      setError(`No puedes recoger más cantidad de la solicitada. Máximo permitido: ${line.quantity}`)
+      showError('Cantidad Excedida', `No puedes recoger mas cantidad de la solicitada. Maximo permitido: ${line.quantity}`)
       return
     }
     
@@ -416,7 +453,7 @@ function PickingSession() {
       
       await fetchOrderProducts()
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Error al actualizar cantidad')
+      showError('Error', err.response?.data?.message || 'Error al actualizar cantidad')
     } finally {
       setUpdatingQty(null)
     }
@@ -436,16 +473,162 @@ function PickingSession() {
         }, {
           params: { token: apiKey }
         })
-        setSuccess('Producto manual retirado')
+        showSuccess('Producto Retirado', 'El producto manual ha sido retirado del pedido.')
       } else {
         await handleUpdateQuantity(itemId, 0)
-        setSuccess('Cantidad reiniciada a 0')
+        showSuccess('Cantidad Reiniciada', 'La cantidad ha sido reiniciada a 0.')
       }
       
       await fetchOrderProducts()
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Error al retirar producto')
+      showError('Error', err.response?.data?.message || 'Error al retirar producto')
     }
+  }
+
+  // Video recording functions
+  const startVideoRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'environment' }, 
+        audio: true 
+      })
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.play()
+      }
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' })
+      mediaRecorderRef.current = mediaRecorder
+      chunksRef.current = []
+      
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data)
+        }
+      }
+      
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(chunksRef.current, { type: 'video/webm' })
+        stream.getTracks().forEach(track => track.stop())
+        await uploadVideo(blob)
+      }
+      
+      mediaRecorder.start()
+      setIsRecordingVideo(true)
+    } catch (err) {
+      showError('Error de Camara', 'No se pudo acceder a la camara. Verifica los permisos.')
+    }
+  }
+
+  const stopVideoRecording = () => {
+    if (mediaRecorderRef.current && isRecordingVideo) {
+      mediaRecorderRef.current.stop()
+      setIsRecordingVideo(false)
+    }
+  }
+
+  const uploadVideo = async (blob: Blob) => {
+    setUploading(true)
+    setError('')
+
+    try {
+      const formData = new FormData()
+      formData.append('photo', blob, `video_${Date.now()}.webm`)
+      formData.append('order_id', currentOrderId || '')
+      formData.append('appuser', pickerName)
+      formData.append('evidence_type', 'video')
+
+      const response = await axios.post(
+        `${storeUrl}/wp-json/picking/v1/upload-photo`,
+        formData,
+        {
+          params: { token: apiKey },
+        }
+      )
+
+      const newEvidence: EvidenceItem = {
+        url: response.data.url || response.data.photo_url || 'uploaded',
+        type: 'video',
+        uploaded_by: pickerName,
+        uploaded_at: new Date().toISOString(),
+      }
+      setEvidence(prev => [...prev, newEvidence])
+      setPhotos(prev => [...prev, newEvidence.url])
+      showSuccess('Video Subido', 'El video ha sido subido correctamente.')
+      setPhotoDialog(false)
+    } catch (err: any) {
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
+          localStorage.removeItem('user_logged_in')
+          localStorage.removeItem('picking_user')
+          window.location.href = '/'
+        })
+      } else {
+        showError('Error de Subida', err.response?.data?.message || 'Error al subir el video')
+      }
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleVideoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    // Validate video file type
+    const validTypes = ['video/mp4', 'video/webm', 'video/quicktime', 'video/mov']
+    if (!validTypes.includes(file.type)) {
+      showError('Formato No Valido', 'Solo se permiten videos en formato MP4, MOV o WEBM.')
+      return
+    }
+
+    setUploading(true)
+    setError('')
+
+    try {
+      const formData = new FormData()
+      formData.append('photo', file)
+      formData.append('order_id', currentOrderId || '')
+      formData.append('appuser', pickerName)
+      formData.append('evidence_type', 'video')
+
+      const response = await axios.post(
+        `${storeUrl}/wp-json/picking/v1/upload-photo`,
+        formData,
+        {
+          params: { token: apiKey },
+        }
+      )
+
+      const newEvidence: EvidenceItem = {
+        url: response.data.url || response.data.photo_url || 'uploaded',
+        type: 'video',
+        uploaded_by: pickerName,
+        uploaded_at: new Date().toISOString(),
+      }
+      setEvidence(prev => [...prev, newEvidence])
+      setPhotos(prev => [...prev, newEvidence.url])
+      showSuccess('Video Subido', 'El video ha sido subido correctamente.')
+      setPhotoDialog(false)
+    } catch (err: any) {
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
+          localStorage.removeItem('user_logged_in')
+          localStorage.removeItem('picking_user')
+          window.location.href = '/'
+        })
+      } else {
+        showError('Error de Subida', err.response?.data?.message || 'Error al subir el video')
+      }
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const openVideoPlayer = (url: string) => {
+    setCurrentVideoUrl(url)
+    setVideoPlayerOpen(true)
   }
 
   if (loading) {
@@ -638,6 +821,33 @@ function PickingSession() {
                       Agregado por: {line.added_by}
                     </Typography>
                   )}
+                  {/* Inventory Display */}
+                  <Box sx={{ 
+                    mt: 1, 
+                    p: 0.75, 
+                    bgcolor: line.stock_quantity === 0 ? 'error.50' : (line.stock_quantity != null && line.stock_quantity < line.quantity) ? 'warning.50' : 'success.50',
+                    borderRadius: 1,
+                    border: '1px solid',
+                    borderColor: line.stock_quantity === 0 ? 'error.200' : (line.stock_quantity != null && line.stock_quantity < line.quantity) ? 'warning.200' : 'success.200',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.5
+                  }}>
+                    <Inventory sx={{ 
+                      fontSize: 16, 
+                      color: line.stock_quantity === 0 ? 'error.main' : (line.stock_quantity != null && line.stock_quantity < line.quantity) ? 'warning.main' : 'success.main' 
+                    }} />
+                    <Typography 
+                      variant="body2" 
+                      sx={{ 
+                        fontWeight: 'medium', 
+                        color: line.stock_quantity === 0 ? 'error.main' : (line.stock_quantity != null && line.stock_quantity < line.quantity) ? 'warning.main' : 'success.main',
+                        fontSize: { xs: '0.8rem', sm: '0.85rem' } 
+                      }}
+                    >
+                      Inventario: {line.stock_quantity != null ? `${line.stock_quantity} unidades` : 'No disponible'}
+                    </Typography>
+                  </Box>
                 </Box>
               </Box>
               <IconButton
@@ -788,34 +998,111 @@ function PickingSession() {
 
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
             <Typography variant="h6">
-              Fotos ({photos.length})
+              Evidencia ({photos.length + evidence.length})
             </Typography>
-            <Button
-              variant="outlined"
-              startIcon={<PhotoCamera />}
-              onClick={() => setPhotoDialog(true)}
-            >
-              Agregar Foto
-            </Button>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button
+                variant="outlined"
+                startIcon={<PhotoCamera />}
+                onClick={() => setPhotoDialog(true)}
+                size="small"
+              >
+                Foto
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<Videocam />}
+                onClick={() => setPhotoDialog(true)}
+                size="small"
+                color="secondary"
+              >
+                Video
+              </Button>
+            </Box>
           </Box>
           
-          {photos.length > 0 ? (
-            <List>
-              {photos.map((_, index) => (
-                <ListItem key={index}>
-                  <ListItemText
-                    primary={`Foto ${index + 1}`}
-                    secondary="Subida correctamente"
-                  />
-                  <Chip label="✓" color="success" size="small" />
-                </ListItem>
-              ))}
-            </List>
+          {(photos.length > 0 || evidence.length > 0) ? (
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {photos.map((url, index) => {
+                const isVideo = url.includes('.webm') || url.includes('.mp4') || url.includes('.mov') || evidence.find(e => e.url === url)?.type === 'video'
+                return (
+                  <Box
+                    key={index}
+                    sx={{
+                      width: 80,
+                      height: 80,
+                      borderRadius: 1,
+                      overflow: 'hidden',
+                      border: '2px solid',
+                      borderColor: isVideo ? 'secondary.main' : 'primary.main',
+                      position: 'relative',
+                      cursor: isVideo ? 'pointer' : 'default',
+                      bgcolor: 'grey.200',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    onClick={() => isVideo && openVideoPlayer(url)}
+                  >
+                    {isVideo ? (
+                      <>
+                        <Videocam sx={{ fontSize: 32, color: 'secondary.main' }} />
+                        <Box
+                          sx={{
+                            position: 'absolute',
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            bgcolor: 'rgba(0,0,0,0.6)',
+                            color: 'white',
+                            fontSize: '0.65rem',
+                            textAlign: 'center',
+                            py: 0.25,
+                          }}
+                        >
+                          <PlayArrow sx={{ fontSize: 12 }} /> Video
+                        </Box>
+                      </>
+                    ) : (
+                      <>
+                        <Box
+                          component="img"
+                          src={url}
+                          alt={`Evidencia ${index + 1}`}
+                          sx={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover',
+                          }}
+                          onError={(e: any) => {
+                            e.target.style.display = 'none'
+                          }}
+                        />
+                        <PhotoCamera sx={{ fontSize: 32, color: 'primary.main', position: 'absolute' }} />
+                      </>
+                    )}
+                    <Chip
+                      label={index + 1}
+                      size="small"
+                      sx={{
+                        position: 'absolute',
+                        top: 2,
+                        right: 2,
+                        minWidth: 20,
+                        height: 20,
+                        fontSize: '0.7rem',
+                      }}
+                      color={isVideo ? 'secondary' : 'primary'}
+                    />
+                  </Box>
+                )
+              })}
+            </Box>
           ) : (
             <Alert severity="warning">
-              Debe subir al menos una foto para completar el pedido
+              Debe subir al menos una foto o video para completar el pedido
             </Alert>
           )}
         </CardContent>
@@ -833,39 +1120,148 @@ function PickingSession() {
         Finalizar Pedido
       </Button>
 
-      <Dialog open={photoDialog} onClose={() => setPhotoDialog(false)}>
-        <DialogTitle>Subir Foto</DialogTitle>
+      <Dialog open={photoDialog} onClose={() => !isRecordingVideo && setPhotoDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Subir Evidencia</DialogTitle>
         <DialogContent>
-          <Box sx={{ textAlign: 'center', py: 2 }}>
-            <input
-              accept="image/*"
-              style={{ display: 'none' }}
-              id="photo-upload"
-              type="file"
-              onChange={handlePhotoUpload}
-              disabled={uploading}
-            />
-            <label htmlFor="photo-upload">
-              <IconButton
-                color="primary"
-                aria-label="upload picture"
-                component="span"
-                disabled={uploading}
-                sx={{ fontSize: 64 }}
+          {isRecordingVideo ? (
+            <Box sx={{ textAlign: 'center', py: 2 }}>
+              <Box sx={{ position: 'relative', width: '100%', maxWidth: 400, mx: 'auto', mb: 2 }}>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  style={{ width: '100%', borderRadius: 8, backgroundColor: '#000' }}
+                />
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    top: 8,
+                    right: 8,
+                    bgcolor: 'error.main',
+                    color: 'white',
+                    px: 1,
+                    py: 0.5,
+                    borderRadius: 1,
+                    fontSize: '0.75rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.5,
+                  }}
+                >
+                  <Box sx={{ width: 8, height: 8, bgcolor: 'white', borderRadius: '50%', animation: 'pulse 1s infinite' }} />
+                  GRABANDO
+                </Box>
+              </Box>
+              <Button
+                variant="contained"
+                color="error"
+                onClick={stopVideoRecording}
+                startIcon={<Close />}
+                size="large"
               >
-                {uploading ? <CircularProgress /> : <Upload sx={{ fontSize: 64 }} />}
-              </IconButton>
-            </label>
-            <Typography variant="body2" sx={{ mt: 2 }}>
-              {uploading ? 'Subiendo foto...' : 'Toque para seleccionar una foto'}
-            </Typography>
-          </Box>
+                Detener Grabacion
+              </Button>
+            </Box>
+          ) : (
+            <Box sx={{ py: 2 }}>
+              <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', textAlign: 'center' }}>
+                Seleccione el tipo de evidencia
+              </Typography>
+              
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
+                {/* Photo upload */}
+                <Box sx={{ textAlign: 'center', p: 2, border: '1px dashed', borderColor: 'primary.main', borderRadius: 2 }}>
+                  <input
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    id="photo-upload"
+                    type="file"
+                    onChange={handlePhotoUpload}
+                    disabled={uploading}
+                  />
+                  <label htmlFor="photo-upload">
+                    <Button
+                      variant="outlined"
+                      component="span"
+                      disabled={uploading}
+                      startIcon={uploading ? <CircularProgress size={20} /> : <PhotoCamera />}
+                      fullWidth
+                    >
+                      {uploading ? 'Subiendo...' : 'Subir Foto desde Galeria'}
+                    </Button>
+                  </label>
+                </Box>
+
+                {/* Video upload */}
+                <Box sx={{ textAlign: 'center', p: 2, border: '1px dashed', borderColor: 'secondary.main', borderRadius: 2 }}>
+                  <input
+                    accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
+                    style={{ display: 'none' }}
+                    id="video-upload"
+                    type="file"
+                    onChange={handleVideoUpload}
+                    disabled={uploading}
+                  />
+                  <label htmlFor="video-upload">
+                    <Button
+                      variant="outlined"
+                      color="secondary"
+                      component="span"
+                      disabled={uploading}
+                      startIcon={uploading ? <CircularProgress size={20} /> : <Videocam />}
+                      fullWidth
+                    >
+                      {uploading ? 'Subiendo...' : 'Subir Video desde Galeria'}
+                    </Button>
+                  </label>
+                </Box>
+
+                {/* Record video */}
+                <Box sx={{ textAlign: 'center', p: 2, border: '1px dashed', borderColor: 'error.main', borderRadius: 2 }}>
+                  <Button
+                    variant="contained"
+                    color="error"
+                    onClick={startVideoRecording}
+                    disabled={uploading}
+                    startIcon={<Videocam />}
+                    fullWidth
+                  >
+                    Grabar Video
+                  </Button>
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                    Abre la camara para grabar un video
+                  </Typography>
+                </Box>
+              </Box>
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setPhotoDialog(false)} disabled={uploading}>
+          <Button onClick={() => setPhotoDialog(false)} disabled={uploading || isRecordingVideo}>
             Cancelar
           </Button>
         </DialogActions>
+      </Dialog>
+
+      {/* Video Player Modal */}
+      <Dialog open={videoPlayerOpen} onClose={() => setVideoPlayerOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          Reproductor de Video
+          <IconButton onClick={() => setVideoPlayerOpen(false)}>
+            <Close />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ width: '100%', bgcolor: '#000', borderRadius: 1, overflow: 'hidden' }}>
+            <video
+              src={currentVideoUrl}
+              controls
+              autoPlay
+              style={{ width: '100%', maxHeight: '70vh' }}
+            />
+          </Box>
+        </DialogContent>
       </Dialog>
 
       <Dialog open={finishDialog} onClose={() => setFinishDialog(false)}>

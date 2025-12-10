@@ -1564,6 +1564,8 @@ class Picking_API {
         }
         
         $order_id = $request->get_param('order_id');
+        $appuser = $request->get_param('appuser');
+        $evidence_type = $request->get_param('evidence_type');
         
         if (empty($order_id)) {
             return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
@@ -1580,43 +1582,67 @@ class Picking_API {
         }
         
         if (empty($photo_file)) {
-            return new WP_Error('missing_photo', __('Foto requerida.', 'picking-connector'), array('status' => 400));
+            return new WP_Error('missing_photo', __('Archivo requerido.', 'picking-connector'), array('status' => 400));
         }
         
+        // Determine if this is a video or photo based on file extension or evidence_type parameter
+        $filename = sanitize_file_name($photo_file['name']);
+        $file_ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        $video_extensions = array('mp4', 'webm', 'mov', 'avi', 'mkv');
+        $is_video = in_array($file_ext, $video_extensions) || $evidence_type === 'video';
+        
         $upload_dir = wp_upload_dir();
-        $picking_dir = $upload_dir['basedir'] . '/picking-connector/photos/' . $order_id;
+        $subdir = $is_video ? 'videos' : 'photos';
+        $picking_dir = $upload_dir['basedir'] . '/picking-connector/' . $subdir . '/' . $order_id;
         
         if (!file_exists($picking_dir)) {
             wp_mkdir_p($picking_dir);
         }
         
         $file = $photo_file;
-        $filename = sanitize_file_name($file['name']);
         $new_filename = time() . '_' . $filename;
         $destination = $picking_dir . '/' . $new_filename;
         
         if (move_uploaded_file($file['tmp_name'], $destination)) {
-            $photo_url = $upload_dir['baseurl'] . '/picking-connector/photos/' . $order_id . '/' . $new_filename;
+            $file_url = $upload_dir['baseurl'] . '/picking-connector/' . $subdir . '/' . $order_id . '/' . $new_filename;
             
             $order = wc_get_order($order_id);
             if ($order) {
+                // Store in picking_photos for backward compatibility
                 $photos = $order->get_meta('picking_photos');
                 if (!is_array($photos)) {
                     $photos = array();
                 }
-                $photos[] = $photo_url;
+                $photos[] = $file_url;
                 $order->update_meta_data('picking_photos', $photos);
+                
+                // Store detailed evidence with audit trail
+                $evidence = $order->get_meta('picking_evidence');
+                if (!is_array($evidence)) {
+                    $evidence = array();
+                }
+                $evidence[] = array(
+                    'url' => $file_url,
+                    'type' => $is_video ? 'video' : 'photo',
+                    'uploaded_by' => !empty($appuser) ? sanitize_text_field($appuser) : 'unknown',
+                    'uploaded_at' => current_time('mysql'),
+                    'filename' => $new_filename,
+                );
+                $order->update_meta_data('picking_evidence', $evidence);
                 $order->save();
             }
             
+            $message = $is_video ? __('Video subido correctamente.', 'picking-connector') : __('Foto subida correctamente.', 'picking-connector');
+            
             return array(
                 'success' => true,
-                'url' => $photo_url,
-                'message' => __('Foto subida correctamente.', 'picking-connector'),
+                'url' => $file_url,
+                'type' => $is_video ? 'video' : 'photo',
+                'message' => $message,
             );
         }
         
-        return new WP_Error('upload_failed', __('Error al subir la foto.', 'picking-connector'), array('status' => 500));
+        return new WP_Error('upload_failed', __('Error al subir el archivo.', 'picking-connector'), array('status' => 500));
     }
     
     public function get_config($request) {
@@ -2047,6 +2073,26 @@ class Picking_API {
         $order->update_meta_data('picking_status', 'completed');
         $order->update_meta_data('picking_completed_at', current_time('mysql'));
         $order->update_meta_data('picking_completed_by', $appuser);
+        
+        // Record inventory snapshot at time of picking completion
+        $inventory_snapshot = array();
+        foreach ($order->get_items() as $item_id => $item) {
+            $product = $item->get_product();
+            if ($product) {
+                $stock_before = $product->get_stock_quantity();
+                $picked_qty = (int) $item->get_meta('picked_qty');
+                $inventory_snapshot[] = array(
+                    'item_id' => $item_id,
+                    'product_id' => $product->get_id(),
+                    'product_name' => $item->get_name(),
+                    'sku' => $product->get_sku(),
+                    'stock_at_picking' => $stock_before,
+                    'quantity_picked' => $picked_qty,
+                    'stock_after_picking' => $stock_before !== null ? max(0, $stock_before - $picked_qty) : null,
+                );
+            }
+        }
+        $order->update_meta_data('picking_inventory_snapshot', $inventory_snapshot);
         
         // Add order note
         if (!empty($notes)) {

@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Container } from '@mui/material'
 import { AuthProvider } from './contexts/AuthContext'
+import { AlertProvider } from './contexts/AlertContext'
 import StoreConfig from './components/StoreConfig'
 import UserLogin from './components/UserLogin'
 import OrderList from './components/OrderList'
@@ -61,12 +62,13 @@ function AppContent(){
   }
 
   return (
-    <AuthProvider>
-      <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
-        <Header />
-        <OfflineIndicator />
-        <Container maxWidth="md" sx={{ py: 2 }}>
-          <Routes>
+    <AlertProvider>
+      <AuthProvider>
+        <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
+          <Header />
+          <OfflineIndicator />
+          <Container maxWidth="md" sx={{ py: 2 }}>
+            <Routes>
             <Route path="/login" element={<Navigate to="/orders" />} />
             <Route path="/connect" element={<StoreConfig onConnected={handleConnected} />} />
             <Route
@@ -150,10 +152,11 @@ function AppContent(){
               }
             />
             <Route path="/" element={<Navigate to="/orders" />} />
-          </Routes>
-        </Container>
-      </div>
-    </AuthProvider>
+            </Routes>
+          </Container>
+        </div>
+      </AuthProvider>
+    </AlertProvider>
   )
 }
 
