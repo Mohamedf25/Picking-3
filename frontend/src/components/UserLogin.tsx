@@ -22,6 +22,12 @@ interface UserPermissions {
   can_view_stats: boolean
   can_manage_users: boolean
   can_view_dashboard: boolean
+  can_view_orders: boolean
+  can_edit_picking: boolean
+  can_view_audit: boolean
+  can_view_photos: boolean
+  can_restart_picking: boolean
+  can_manage_settings: boolean
 }
 
 interface PickingUser {
@@ -75,6 +81,22 @@ function UserLogin({ onLoggedIn }: UserLoginProps) {
         localStorage.setItem('picker_name', user.name)
         localStorage.setItem('user_logged_in', 'true')
 
+        // Fetch feature flags from plugin
+        try {
+          const featuresResponse = await axios.get(
+            `${storeUrl}/wp-json/picking/v1/get-feature-settings?token=${apiKey}&appuser=${encodeURIComponent(user.name)}`
+          )
+          if (featuresResponse.data.success) {
+            localStorage.setItem('picking_feature_flags', JSON.stringify(featuresResponse.data.features))
+            // Update permissions with the ones from feature settings if available
+            if (featuresResponse.data.user_permissions) {
+              localStorage.setItem('picking_permissions', JSON.stringify(featuresResponse.data.user_permissions))
+            }
+          }
+        } catch (featuresErr) {
+          console.warn('Could not fetch feature settings:', featuresErr)
+        }
+
         onLoggedIn()
       } else {
         setError(response.data.message || 'Error al iniciar sesion')
@@ -107,7 +129,23 @@ function UserLogin({ onLoggedIn }: UserLoginProps) {
       can_process_orders: true,
       can_view_stats: false,
       can_manage_users: false,
-      can_view_dashboard: false
+      can_view_dashboard: false,
+      can_view_orders: true,
+      can_edit_picking: true,
+      can_view_audit: false,
+      can_view_photos: false,
+      can_restart_picking: false,
+      can_manage_settings: false
+    }))
+    localStorage.setItem('picking_feature_flags', JSON.stringify({
+      order_editing: true,
+      photo_viewing: true,
+      history_viewing: true,
+      manual_products: true,
+      audit_viewing: true,
+      order_management: true,
+      user_management: false,
+      restart_picking: false
     }))
     localStorage.setItem('user_logged_in', 'true')
     onLoggedIn()

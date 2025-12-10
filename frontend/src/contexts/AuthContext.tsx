@@ -13,11 +13,29 @@ interface Permissions {
   can_view_stats: boolean
   can_manage_users: boolean
   can_view_dashboard: boolean
+  can_view_orders: boolean
+  can_edit_picking: boolean
+  can_view_audit: boolean
+  can_view_photos: boolean
+  can_restart_picking: boolean
+  can_manage_settings: boolean
+}
+
+interface FeatureFlags {
+  order_editing: boolean
+  photo_viewing: boolean
+  history_viewing: boolean
+  manual_products: boolean
+  audit_viewing: boolean
+  order_management: boolean
+  user_management: boolean
+  restart_picking: boolean
 }
 
 interface AuthContextType {
   user: User | null
   permissions: Permissions | null
+  featureFlags: FeatureFlags | null
   token: string | null
   logout: () => void
   loading: boolean
@@ -29,6 +47,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [permissions, setPermissions] = useState<Permissions | null>(null)
+  const [featureFlags, setFeatureFlags] = useState<FeatureFlags | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [isOffline, setIsOffline] = useState(!navigator.onLine)
@@ -37,6 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const initializeAuth = () => {
       const pickingUser = localStorage.getItem('picking_user')
       const pickingPermissions = localStorage.getItem('picking_permissions')
+      const pickingFeatureFlags = localStorage.getItem('picking_feature_flags')
       const apiKey = localStorage.getItem('api_key')
       
       if (pickingUser) {
@@ -50,6 +70,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       if (pickingPermissions) {
         setPermissions(JSON.parse(pickingPermissions))
+      }
+      
+      if (pickingFeatureFlags) {
+        setFeatureFlags(JSON.parse(pickingFeatureFlags))
       }
       
       if (apiKey) {
@@ -82,6 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = () => {
     localStorage.removeItem('picking_user')
     localStorage.removeItem('picking_permissions')
+    localStorage.removeItem('picking_feature_flags')
     localStorage.removeItem('user_logged_in')
     localStorage.removeItem('connected')
     localStorage.removeItem('store_url')
@@ -90,12 +115,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('picker_name')
     setUser(null)
     setPermissions(null)
+    setFeatureFlags(null)
     setToken(null)
     window.location.href = '/'
   }
 
   return (
-    <AuthContext.Provider value={{ user, permissions, token, logout, loading, isOffline }}>
+    <AuthContext.Provider value={{ user, permissions, featureFlags, token, logout, loading, isOffline }}>
       {children}
     </AuthContext.Provider>
   )

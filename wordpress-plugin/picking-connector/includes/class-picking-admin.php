@@ -303,6 +303,7 @@ class Picking_Admin {
             'picking_enable_history_viewing' => isset($_POST['enable_history_viewing']) ? '1' : '0',
             'picking_enable_audit_viewing' => isset($_POST['enable_audit_viewing']) ? '1' : '0',
             'picking_enable_user_management' => isset($_POST['enable_user_management']) ? '1' : '0',
+            'picking_enable_restart_picking' => isset($_POST['enable_restart_picking']) ? '1' : '0',
         );
         
         foreach ($features as $key => $value) {
@@ -310,6 +311,137 @@ class Picking_Admin {
         }
         
         wp_send_json_success(array('message' => __('Funciones guardadas correctamente.', 'picking-connector')));
+    }
+    
+    public function ajax_save_permissions() {
+        check_ajax_referer('picking_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => __('No tienes permisos.', 'picking-connector')));
+        }
+        
+        $roles = array('admin', 'supervisor', 'picker');
+        $permissions_list = array('can_view_orders', 'can_edit_picking', 'can_view_audit', 'can_view_photos', 'can_restart_picking', 'can_manage_settings');
+        
+        $role_permissions = array();
+        foreach ($roles as $role) {
+            $role_permissions[$role] = array();
+            foreach ($permissions_list as $perm) {
+                $key = 'perm_' . $role . '_' . $perm;
+                $role_permissions[$role][$perm] = isset($_POST[$key]) ? true : false;
+            }
+        }
+        
+        update_option('picking_role_permissions', $role_permissions);
+        
+        wp_send_json_success(array('message' => __('Permisos guardados correctamente.', 'picking-connector')));
+    }
+    
+    public function ajax_save_retention() {
+        check_ajax_referer('picking_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => __('No tienes permisos.', 'picking-connector')));
+        }
+        
+        $retention_days = isset($_POST['photo_retention_days']) ? absint($_POST['photo_retention_days']) : 0;
+        update_option('picking_photo_retention_days', $retention_days);
+        
+        wp_send_json_success(array('message' => __('Configuracion de retencion guardada.', 'picking-connector')));
+    }
+    
+    public function ajax_cleanup_photos() {
+        check_ajax_referer('picking_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => __('No tienes permisos.', 'picking-connector')));
+        }
+        
+        $retention_days = get_option('picking_photo_retention_days', 0);
+        
+        if ($retention_days <= 0) {
+            wp_send_json_error(array('message' => __('La retencion de fotos esta desactivada. Configura un numero de dias mayor a 0.', 'picking-connector')));
+        }
+        
+        $deleted_count = $this->cleanup_old_photos($retention_days);
+        
+        wp_send_json_success(array(
+            'message' => sprintf(__('Se eliminaron %d fotos antiguas.', 'picking-connector'), $deleted_count),
+            'deleted' => $deleted_count,
+        ));
+    }
+    
+    public function cleanup_old_photos($retention_days) {
+        if ($retention_days <= 0) {
+            return 0;
+        }
+        
+        $cutoff_time = time() - ($retention_days * 24 * 60 * 60);
+        $upload_dir = wp_upload_dir();
+        $picking_photos_dir = $upload_dir['basedir'] . '/picking-connector/photos';
+        
+        if (!is_dir($picking_photos_dir)) {
+            return 0;
+        }
+        
+        $deleted_count = 0;
+        $order_dirs = glob($picking_photos_dir . '/*', GLOB_ONLYDIR);
+        
+        foreach ($order_dirs as $order_dir) {
+            $order_id = basename($order_dir);
+            $files = glob($order_dir . '/*');
+            
+            foreach ($files as $file) {
+                if (is_file($file)) {
+                    $file_time = filemtime($file);
+                    if ($file_time < $cutoff_time) {
+                        if (unlink($file)) {
+                            $deleted_count++;
+                        }
+                    }
+                }
+            }
+            
+            $remaining_files = glob($order_dir . '/*');
+            if (empty($remaining_files)) {
+                rmdir($order_dir);
+            }
+            
+            if (is_numeric($order_id)) {
+                $order = wc_get_order($order_id);
+                if ($order) {
+                    $photos = $order->get_meta('picking_photos');
+                    if (is_array($photos)) {
+                        $updated_photos = array();
+                        foreach ($photos as $photo_url) {
+                            $photo_path = str_replace($upload_dir['baseurl'], $upload_dir['basedir'], $photo_url);
+                            if (file_exists($photo_path)) {
+                                $updated_photos[] = $photo_url;
+                            }
+                        }
+                        if (count($updated_photos) !== count($photos)) {
+                            $order->update_meta_data('picking_photos', $updated_photos);
+                            $order->save();
+                        }
+                    }
+                }
+            }
+        }
+        
+        return $deleted_count;
+    }
+    
+    public function ajax_save_status_config() {
+        check_ajax_referer('picking_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => __('No tienes permisos.', 'picking-connector')));
+        }
+        
+        $started_status = isset($_POST['picking_started_status']) ? sanitize_text_field($_POST['picking_started_status']) : '';
+        update_option('picking_started_status', $started_status);
+        
+        wp_send_json_success(array('message' => __('Configuracion de estados guardada.', 'picking-connector')));
     }
     
     public function add_picking_order_column($columns) {

@@ -5,10 +5,14 @@ import { Logout, ShoppingCart, Person, Menu as MenuIcon } from '@mui/icons-mater
 import { useState } from 'react'
 
 function Header() {
-  const { user, permissions, logout } = useAuth()
+  const { user, permissions, featureFlags, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
+
+  // Helper to check if a feature is available (both global flag and user permission)
+  const canAccessOrderManagement = featureFlags?.order_management !== false && permissions?.can_view_orders !== false
+  const canAccessPhotos = featureFlags?.photo_viewing !== false && permissions?.can_view_photos !== false
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget)
@@ -58,7 +62,7 @@ function Header() {
                   Dashboard
                 </Button>
               )}
-              {permissions?.can_view_dashboard && (
+              {canAccessOrderManagement && (
                 <Button
                   color="inherit"
                   onClick={() => navigate('/order-management')}
@@ -67,7 +71,7 @@ function Header() {
                   Gestion
                 </Button>
               )}
-              {permissions?.can_view_dashboard && (
+              {canAccessPhotos && (
                 <Button
                   color="inherit"
                   onClick={() => navigate('/photos')}
@@ -102,10 +106,10 @@ function Header() {
               {permissions?.can_view_dashboard && (
                 <MenuItem onClick={() => handleNavigate('/dashboard')}>Dashboard</MenuItem>
               )}
-              {permissions?.can_view_dashboard && (
+              {canAccessOrderManagement && (
                 <MenuItem onClick={() => handleNavigate('/order-management')}>Gestion de Pedidos</MenuItem>
               )}
-              {permissions?.can_view_dashboard && (
+              {canAccessPhotos && (
                 <MenuItem onClick={() => handleNavigate('/photos')}>Galeria de Fotos</MenuItem>
               )}
               {permissions?.can_manage_users && (
