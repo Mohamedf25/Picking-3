@@ -694,6 +694,13 @@ class Picking_API {
             $order->update_meta_data('picking_status', 'picking');
             $order->update_meta_data('picking_started_at', current_time('mysql'));
             $order->update_meta_data('picking_started_by', $appuser);
+            
+            // Change WooCommerce order status if configured
+            $started_status = get_option('picking_started_status', '');
+            if (!empty($started_status)) {
+                $order->set_status(str_replace('wc-', '', $started_status), __('Picking iniciado por ', 'picking-connector') . $appuser);
+            }
+            
             $order->save();
         }
         
@@ -2048,10 +2055,12 @@ class Picking_API {
             $order->add_order_note(sprintf(__('Picking completado por %s', 'picking-connector'), $appuser));
         }
         
-        // Update order status to completed if auto_complete is enabled
+        // Update order status to configured status if auto_complete is enabled
         $auto_complete = get_option('picking_auto_complete', '1') === '1';
         if ($auto_complete) {
-            $order->update_status('completed', __('Pedido completado via Picking App.', 'picking-connector'));
+            $completed_status = get_option('picking_completed_status', 'wc-completed');
+            $status_to_set = str_replace('wc-', '', $completed_status);
+            $order->update_status($status_to_set, __('Pedido completado via Picking App.', 'picking-connector'));
         }
         
         $order->save();

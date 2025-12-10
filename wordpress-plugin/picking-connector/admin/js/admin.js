@@ -22,6 +22,7 @@
             $(document).on('submit', '#picking-retention-form', this.saveRetention);
             $(document).on('submit', '#picking-status-config-form', this.saveStatusConfig);
             $(document).on('click', '#picking-cleanup-photos', this.cleanupPhotos);
+            $(document).on('click', '#picking-delete-all-photos', this.deleteAllPhotos);
             $(document).on('change', 'input[name="scanner_type"]', this.updateScannerSelection);
             
             // User management events
@@ -318,6 +319,53 @@
                         }, 1500);
                     } else {
                         PickingAdmin.showStatus('error', response.data.message || 'Error al limpiar fotos');
+                    }
+                },
+                error: function(xhr, status, error) {
+                    console.error('AJAX Error:', status, error);
+                    PickingAdmin.showStatus('error', 'Error de conexion: ' + error);
+                },
+                complete: function() {
+                    $button.prop('disabled', false).html(originalText);
+                }
+            });
+            
+            return false;
+        },
+
+        deleteAllPhotos: function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            if (!confirm('ADVERTENCIA: Esta a punto de eliminar TODAS las fotos de evidencia del servidor.\n\nEsta accion NO se puede deshacer.\n\n¿Esta seguro de que desea continuar?')) {
+                return false;
+            }
+            
+            // Double confirmation for safety
+            if (!confirm('CONFIRMACION FINAL: ¿Realmente desea borrar TODAS las imagenes de evidencia? Esta accion es permanente.')) {
+                return false;
+            }
+            
+            var $button = $(this);
+            var originalText = $button.html();
+            
+            $button.prop('disabled', true).html('<span class="dashicons dashicons-update spinning"></span> Eliminando...');
+            
+            $.ajax({
+                url: pickingAdmin.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'picking_delete_all_photos',
+                    nonce: pickingAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        PickingAdmin.showStatus('success', response.data.message);
+                        setTimeout(function() {
+                            location.reload();
+                        }, 1500);
+                    } else {
+                        PickingAdmin.showStatus('error', response.data.message || 'Error al eliminar fotos');
                     }
                 },
                 error: function(xhr, status, error) {
