@@ -394,6 +394,13 @@ function PickingSession() {
   const handleUpdateQuantity = async (itemId: string | number, newQty: number) => {
     if (newQty < 0) return
     
+    // Find the product line to check the maximum allowed quantity
+    const line = productLines.find(l => l.item_id === itemId)
+    if (line && newQty > line.quantity) {
+      setError(`No puedes recoger más cantidad de la solicitada. Máximo permitido: ${line.quantity}`)
+      return
+    }
+    
     setUpdatingQty(itemId)
     setError('')
     
@@ -606,8 +613,9 @@ function PickingSession() {
                 <IconButton
                   size="small"
                   onClick={() => handleUpdateQuantity(line.item_id, line.picked_qty + 1)}
-                  disabled={updatingQty === line.item_id}
+                  disabled={updatingQty === line.item_id || line.picked_qty >= line.quantity}
                   color={line.picked_qty >= line.quantity ? 'default' : 'primary'}
+                  title={line.picked_qty >= line.quantity ? 'Este producto ya ha sido escaneado completamente' : 'Aumentar cantidad'}
                 >
                   <Add />
                 </IconButton>
