@@ -21,12 +21,13 @@ import axios from 'axios'
 import { 
   ShoppingCart, 
   Person, 
-  AttachMoney, 
   PlayArrow,
   ViewList,
   ViewModule,
   SelectAll,
   ClearAll,
+  CalendarToday,
+  Payment,
 } from '@mui/icons-material'
 
 interface Order {
@@ -39,6 +40,7 @@ interface Order {
   picking_status: string
   user_claimed: string
   date_created: string
+  payment_method: string
 }
 
 type PickingMode = 'single' | 'batch'
@@ -281,16 +283,22 @@ function OrderList() {
                         <Typography variant="h6" component="h2">
                           Pedido #{order.order_number}
                         </Typography>
-                        <Box sx={{ display: 'flex', alignItems: 'center', mt: 1, mb: 1 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
                           <Person sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
                           <Typography variant="body2" color="text.secondary">
-                            {order.customer_name}
+                            Cliente: {order.customer_name}
                           </Typography>
                         </Box>
-                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                          <AttachMoney sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
+                        <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
+                          <CalendarToday sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
                           <Typography variant="body2" color="text.secondary">
-                            {order.total}
+                            Fecha: {new Date(order.date_created).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
+                          <Payment sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
+                          <Typography variant="body2" color="text.secondary">
+                            Pago: {order.payment_method || 'No especificado'}
                           </Typography>
                         </Box>
                       </Box>
