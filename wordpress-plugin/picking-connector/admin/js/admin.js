@@ -17,6 +17,7 @@
             $(document).on('click', '#picking-reset-orders', this.resetOrders);
             $(document).on('click', '.picking-copy-btn', this.copyToClipboard);
             $(document).on('submit', '#picking-settings-form', this.saveSettings);
+            $(document).on('submit', '#picking-features-form', this.saveFeatures);
             $(document).on('change', 'input[name="scanner_type"]', this.updateScannerSelection);
             
             // User management events
@@ -181,7 +182,39 @@
             });
         },
 
-        copyToClipboard: function(e) {
+        saveFeatures: function(e) {
+            e.preventDefault();
+            
+            var $form = $(this);
+            var $button = $form.find('button[type="submit"]');
+            var originalText = $button.html();
+            
+            $button.prop('disabled', true).html('<span class="dashicons dashicons-update spinning"></span> Guardando...');
+            
+            var formData = $form.serialize();
+            formData += '&action=picking_save_features&nonce=' + pickingAdmin.nonce;
+            
+            $.ajax({
+                url: pickingAdmin.ajaxUrl,
+                type: 'POST',
+                data: formData,
+                success: function(response) {
+                    if (response.success) {
+                        PickingAdmin.showStatus('success', response.data.message);
+                    } else {
+                        PickingAdmin.showStatus('error', response.data.message);
+                    }
+                },
+                error: function() {
+                    PickingAdmin.showStatus('error', 'Error de conexion');
+                },
+                complete: function() {
+                    $button.prop('disabled', false).html(originalText);
+                }
+            });
+        },
+
+        copyToClipboard:function(e) {
             e.preventDefault();
             
             var $button = $(this);

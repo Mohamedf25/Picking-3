@@ -221,4 +221,81 @@ if (!defined('ABSPATH')) {
             </div>
         </form>
     </div>
+    
+    <!-- Feature Toggles Card -->
+    <div class="picking-card">
+        <h3>
+            <span class="dashicons dashicons-admin-plugins"></span>
+            <?php esc_html_e('Control de Funciones Web', 'picking-connector'); ?>
+        </h3>
+        <p class="description"><?php esc_html_e('Controla que funciones estan disponibles en la aplicacion web de picking.', 'picking-connector'); ?></p>
+        
+        <form id="picking-features-form" class="picking-settings-form">
+            <div class="picking-grid">
+                <div>
+                    <div class="form-group">
+                        <label><?php esc_html_e('Funciones de Gestion', 'picking-connector'); ?></label>
+                        <div class="checkbox-group">
+                            <label>
+                                <input type="checkbox" name="enable_order_editing" value="1" <?php checked(get_option('picking_enable_order_editing', '1'), '1'); ?>>
+                                <?php esc_html_e('Permitir edicion de pedidos desde la web', 'picking-connector'); ?>
+                            </label>
+                            <label>
+                                <input type="checkbox" name="enable_order_management" value="1" <?php checked(get_option('picking_enable_order_management', '1'), '1'); ?>>
+                                <?php esc_html_e('Permitir gestion completa de pedidos', 'picking-connector'); ?>
+                            </label>
+                            <label>
+                                <input type="checkbox" name="enable_manual_products" value="1" <?php checked(get_option('picking_enable_manual_products', '1'), '1'); ?>>
+                                <?php esc_html_e('Permitir agregar productos manualmente', 'picking-connector'); ?>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label><?php esc_html_e('Funciones de Visualizacion', 'picking-connector'); ?></label>
+                        <div class="checkbox-group">
+                            <label>
+                                <input type="checkbox" name="enable_photo_viewing" value="1" <?php checked(get_option('picking_enable_photo_viewing', '1'), '1'); ?>>
+                                <?php esc_html_e('Permitir ver fotos de picking', 'picking-connector'); ?>
+                            </label>
+                            <label>
+                                <input type="checkbox" name="enable_history_viewing" value="1" <?php checked(get_option('picking_enable_history_viewing', '1'), '1'); ?>>
+                                <?php esc_html_e('Permitir ver historial de pedidos', 'picking-connector'); ?>
+                            </label>
+                            <label>
+                                <input type="checkbox" name="enable_audit_viewing" value="1" <?php checked(get_option('picking_enable_audit_viewing', '1'), '1'); ?>>
+                                <?php esc_html_e('Permitir ver auditoria completa', 'picking-connector'); ?>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div>
+                    <div class="form-group">
+                        <label><?php esc_html_e('Funciones de Administracion', 'picking-connector'); ?></label>
+                        <div class="checkbox-group">
+                            <label>
+                                <input type="checkbox" name="enable_user_management" value="1" <?php checked(get_option('picking_enable_user_management', '1'), '1'); ?>>
+                                <?php esc_html_e('Permitir gestion de usuarios', 'picking-connector'); ?>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label><?php esc_html_e('Informacion', 'picking-connector'); ?></label>
+                        <p class="description" style="background: #f0f0f1; padding: 10px; border-radius: 4px;">
+                            <?php esc_html_e('Las funciones deshabilitadas aqui no estaran disponibles en la aplicacion web. Esto permite controlar que pueden hacer los pickers desde el panel central del plugin.', 'picking-connector'); ?>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="picking-actions">
+                <button type="submit" class="button button-primary">
+                    <span class="dashicons dashicons-saved"></span>
+                    <?php esc_html_e('Guardar Funciones', 'picking-connector'); ?>
+                </button>
+            </div>
+        </form>
+    </div>
 </div>

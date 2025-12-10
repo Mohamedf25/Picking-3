@@ -58,6 +58,24 @@ function Header() {
                   Dashboard
                 </Button>
               )}
+              {permissions?.can_view_dashboard && (
+                <Button
+                  color="inherit"
+                  onClick={() => navigate('/order-management')}
+                  size="small"
+                >
+                  Gestion
+                </Button>
+              )}
+              {permissions?.can_view_dashboard && (
+                <Button
+                  color="inherit"
+                  onClick={() => navigate('/photos')}
+                  size="small"
+                >
+                  Fotos
+                </Button>
+              )}
               {permissions?.can_manage_users && (
                 <Button
                   color="inherit"
@@ -83,6 +101,12 @@ function Header() {
               <MenuItem onClick={() => handleNavigate('/orders')}>Pedidos</MenuItem>
               {permissions?.can_view_dashboard && (
                 <MenuItem onClick={() => handleNavigate('/dashboard')}>Dashboard</MenuItem>
+              )}
+              {permissions?.can_view_dashboard && (
+                <MenuItem onClick={() => handleNavigate('/order-management')}>Gestion de Pedidos</MenuItem>
+              )}
+              {permissions?.can_view_dashboard && (
+                <MenuItem onClick={() => handleNavigate('/photos')}>Galeria de Fotos</MenuItem>
               )}
               {permissions?.can_manage_users && (
                 <MenuItem onClick={() => handleNavigate('/admin')}>Usuarios</MenuItem>
