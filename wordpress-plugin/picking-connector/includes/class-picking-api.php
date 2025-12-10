@@ -2353,6 +2353,16 @@ class Picking_API {
             $found = false;
             foreach ($extra_items as &$item) {
                 if ($item['item_id'] === $item_id) {
+                    // Validate that picked_qty does not exceed expected quantity for manual items
+                    $expected_qty = isset($item['qty']) ? intval($item['qty']) : 1;
+                    if ($picked_qty > $expected_qty) {
+                        return new WP_Error(
+                            'quantity_exceeded', 
+                            sprintf(__('No puedes recoger más cantidad de la solicitada. Máximo permitido: %d', 'picking-connector'), $expected_qty), 
+                            array('status' => 400)
+                        );
+                    }
+                    
                     $item['picked_qty'] = $picked_qty;
                     $item['last_modified_by'] = $appuser;
                     $item['last_modified_at'] = current_time('mysql');
@@ -2377,10 +2387,20 @@ class Picking_API {
             }
             
             $item = $items[$item_id_int];
+            
+            // Validate that picked_qty does not exceed expected quantity
+            $expected_qty = $item->get_quantity();
+            if ($picked_qty > $expected_qty) {
+                return new WP_Error(
+                    'quantity_exceeded', 
+                    sprintf(__('No puedes recoger más cantidad de la solicitada. Máximo permitido: %d', 'picking-connector'), $expected_qty), 
+                    array('status' => 400)
+                );
+            }
+            
             $item->update_meta_data('picked_qty', $picked_qty);
             
             // Update picking status based on quantity
-            $expected_qty = $item->get_quantity();
             if ($picked_qty >= $expected_qty) {
                 $item->update_meta_data('picking_status', 'completed');
             } elseif ($picked_qty > 0) {
