@@ -220,6 +220,7 @@
 
         savePermissions: function(e) {
             e.preventDefault();
+            e.stopPropagation();
             
             var $form = $(this);
             var $button = $form.find('button[type="submit"]');
@@ -238,20 +239,24 @@
                     if (response.success) {
                         PickingAdmin.showStatus('success', response.data.message);
                     } else {
-                        PickingAdmin.showStatus('error', response.data.message);
+                        PickingAdmin.showStatus('error', response.data.message || 'Error al guardar permisos');
                     }
                 },
-                error: function() {
-                    PickingAdmin.showStatus('error', 'Error de conexion');
+                error: function(xhr, status, error) {
+                    console.error('AJAX Error:', status, error);
+                    PickingAdmin.showStatus('error', 'Error de conexion: ' + error);
                 },
                 complete: function() {
                     $button.prop('disabled', false).html(originalText);
                 }
             });
+            
+            return false;
         },
 
         saveRetention: function(e) {
             e.preventDefault();
+            e.stopPropagation();
             
             var $form = $(this);
             var $button = $form.find('button[type="submit"]');
@@ -270,23 +275,27 @@
                     if (response.success) {
                         PickingAdmin.showStatus('success', response.data.message);
                     } else {
-                        PickingAdmin.showStatus('error', response.data.message);
+                        PickingAdmin.showStatus('error', response.data.message || 'Error al guardar retencion');
                     }
                 },
-                error: function() {
-                    PickingAdmin.showStatus('error', 'Error de conexion');
+                error: function(xhr, status, error) {
+                    console.error('AJAX Error:', status, error);
+                    PickingAdmin.showStatus('error', 'Error de conexion: ' + error);
                 },
                 complete: function() {
                     $button.prop('disabled', false).html(originalText);
                 }
             });
+            
+            return false;
         },
 
         cleanupPhotos: function(e) {
             e.preventDefault();
+            e.stopPropagation();
             
             if (!confirm('Esta seguro de que desea ejecutar la limpieza de fotos ahora? Se eliminaran las fotos mas antiguas que el numero de dias configurado.')) {
-                return;
+                return false;
             }
             
             var $button = $(this);
@@ -308,20 +317,24 @@
                             location.reload();
                         }, 1500);
                     } else {
-                        PickingAdmin.showStatus('error', response.data.message);
+                        PickingAdmin.showStatus('error', response.data.message || 'Error al limpiar fotos');
                     }
                 },
-                error: function() {
-                    PickingAdmin.showStatus('error', 'Error de conexion');
+                error: function(xhr, status, error) {
+                    console.error('AJAX Error:', status, error);
+                    PickingAdmin.showStatus('error', 'Error de conexion: ' + error);
                 },
                 complete: function() {
                     $button.prop('disabled', false).html(originalText);
                 }
             });
+            
+            return false;
         },
 
         saveStatusConfig: function(e) {
             e.preventDefault();
+            e.stopPropagation();
             
             var $form = $(this);
             var $button = $form.find('button[type="submit"]');
@@ -340,16 +353,19 @@
                     if (response.success) {
                         PickingAdmin.showStatus('success', response.data.message);
                     } else {
-                        PickingAdmin.showStatus('error', response.data.message);
+                        PickingAdmin.showStatus('error', response.data.message || 'Error al guardar configuracion');
                     }
                 },
-                error: function() {
-                    PickingAdmin.showStatus('error', 'Error de conexion');
+                error: function(xhr, status, error) {
+                    console.error('AJAX Error:', status, error);
+                    PickingAdmin.showStatus('error', 'Error de conexion: ' + error);
                 },
                 complete: function() {
                     $button.prop('disabled', false).html(originalText);
                 }
             });
+            
+            return false;
         },
 
         copyToClipboard:function(e) {
