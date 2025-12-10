@@ -450,6 +450,19 @@ if (!defined('ABSPATH')) {
                 </button>
             </div>
         </form>
+        
+        <hr style="margin: 20px 0; border-top: 1px solid #ddd;">
+        
+        <div class="form-group">
+            <label><?php esc_html_e('Eliminar TODAS las fotos', 'picking-connector'); ?></label>
+            <p class="description" style="background: #ffebee; padding: 10px; border-radius: 4px; border-left: 4px solid #f44336; margin-bottom: 10px;">
+                <?php esc_html_e('ADVERTENCIA: Esta accion eliminara TODAS las fotos de evidencia del servidor de forma permanente. Esta accion no se puede deshacer.', 'picking-connector'); ?>
+            </p>
+            <button type="button" id="picking-delete-all-photos" class="button button-secondary" style="background: #f44336; color: white; border-color: #d32f2f;">
+                <span class="dashicons dashicons-warning"></span>
+                <?php esc_html_e('Borrar TODAS las imagenes ahora', 'picking-connector'); ?>
+            </button>
+        </div>
     </div>
     
     <!-- Order Status Configuration Card -->

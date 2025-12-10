@@ -444,6 +444,63 @@ class Picking_Admin {
         wp_send_json_success(array('message' => __('Configuracion de estados guardada.', 'picking-connector')));
     }
     
+    public function ajax_delete_all_photos() {
+        check_ajax_referer('picking_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => __('No tienes permisos para realizar esta accion.', 'picking-connector')));
+        }
+        
+        $deleted_count = $this->delete_all_photos();
+        
+        wp_send_json_success(array(
+            'message' => sprintf(__('Se eliminaron %d fotos de evidencia.', 'picking-connector'), $deleted_count),
+            'deleted' => $deleted_count,
+        ));
+    }
+    
+    public function delete_all_photos() {
+        $upload_dir = wp_upload_dir();
+        $picking_photos_dir = $upload_dir['basedir'] . '/picking-connector/photos';
+        
+        if (!is_dir($picking_photos_dir)) {
+            return 0;
+        }
+        
+        $deleted_count = 0;
+        $order_dirs = glob($picking_photos_dir . '/*', GLOB_ONLYDIR);
+        
+        foreach ($order_dirs as $order_dir) {
+            $order_id = basename($order_dir);
+            $files = glob($order_dir . '/*');
+            
+            foreach ($files as $file) {
+                if (is_file($file)) {
+                    if (unlink($file)) {
+                        $deleted_count++;
+                    }
+                }
+            }
+            
+            // Remove empty directory
+            $remaining_files = glob($order_dir . '/*');
+            if (empty($remaining_files)) {
+                rmdir($order_dir);
+            }
+            
+            // Clear photo references in order meta
+            if (is_numeric($order_id)) {
+                $order = wc_get_order($order_id);
+                if ($order) {
+                    $order->delete_meta_data('picking_photos');
+                    $order->save();
+                }
+            }
+        }
+        
+        return $deleted_count;
+    }
+    
     public function add_picking_order_column($columns) {
         $new_columns = array();
         

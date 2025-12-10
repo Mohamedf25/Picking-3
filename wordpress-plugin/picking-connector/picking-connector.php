@@ -70,6 +70,7 @@ class Picking_Connector {
         $this->loader->add_action('wp_ajax_picking_save_permissions', $admin, 'ajax_save_permissions');
         $this->loader->add_action('wp_ajax_picking_save_retention', $admin, 'ajax_save_retention');
         $this->loader->add_action('wp_ajax_picking_cleanup_photos', $admin, 'ajax_cleanup_photos');
+        $this->loader->add_action('wp_ajax_picking_delete_all_photos', $admin, 'ajax_delete_all_photos');
         $this->loader->add_action('wp_ajax_picking_save_status_config', $admin, 'ajax_save_status_config');
         
         // User management AJAX actions
