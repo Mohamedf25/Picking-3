@@ -1932,7 +1932,7 @@ class Picking_API {
             return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
         }
         
-        // Find the product by checking both SKU and EAN fields against the scanned code
+        // Find the product by checking barcode fields FIRST, then SKU as fallback
         $product_found = false;
         $product_name = '';
         
@@ -1943,21 +1943,21 @@ class Picking_API {
                 continue;
             }
             
-            // Check SKU match first (case-insensitive)
-            $product_sku = trim((string) $product->get_sku());
-            if ($product_sku !== '' && strcasecmp($product_sku, $code) === 0) {
-                $product_found = true;
+            // Check barcode fields FIRST (EAN, GTIN, CND, etc.) - case-insensitive
+            $barcode_meta_keys = array('_alg_ean', '_ean', '_gtin', '_barcode', 'ean', 'gtin', 'barcode', '_cnd', 'cnd', '_codigo_nacional', 'codigo_nacional');
+            foreach ($barcode_meta_keys as $meta_key) {
+                $product_barcode = trim((string) $product->get_meta($meta_key));
+                if ($product_barcode !== '' && strcasecmp($product_barcode, $code) === 0) {
+                    $product_found = true;
+                    break;
+                }
             }
             
-            // Check EAN match (check various meta keys, case-insensitive)
+            // Check SKU as fallback (case-insensitive)
             if (!$product_found) {
-                $ean_meta_keys = array('_alg_ean', '_ean', '_gtin', '_barcode', 'ean', 'gtin', 'barcode');
-                foreach ($ean_meta_keys as $meta_key) {
-                    $product_ean = trim((string) $product->get_meta($meta_key));
-                    if ($product_ean !== '' && strcasecmp($product_ean, $code) === 0) {
-                        $product_found = true;
-                        break;
-                    }
+                $product_sku = trim((string) $product->get_sku());
+                if ($product_sku !== '' && strcasecmp($product_sku, $code) === 0) {
+                    $product_found = true;
                 }
             }
             
