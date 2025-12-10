@@ -906,7 +906,7 @@ class Picking_API {
             'status' => $order_status,
             'limit' => 50, // Fetch more, then filter
             'orderby' => 'date',
-            'order' => 'ASC',
+            'order' => 'DESC', // Most recent orders first
         );
         
         // Debug step: after wc_get_orders
@@ -1005,6 +1005,7 @@ class Picking_API {
                 'customer_name' => $order->get_formatted_billing_full_name(),
                 'total' => $order->get_total(),
                 'item_count' => $order->get_item_count(),
+                'payment_method' => $order->get_payment_method_title(),
             );
         }
         
@@ -1885,13 +1886,31 @@ class Picking_API {
             )
         ));
         
-        // Get completed today
-        $completed_today = wc_get_orders(array(
-            'status' => 'completed',
-            'date_completed' => '>' . date('Y-m-d 00:00:00'),
+        // Get completed today via picking app (using picking_completed_at meta)
+        $today_start = date('Y-m-d 00:00:00');
+        $all_completed_orders = wc_get_orders(array(
             'limit' => -1,
             'return' => 'ids',
+            'meta_query' => array(
+                array(
+                    'key' => 'picking_status',
+                    'value' => 'completed',
+                    'compare' => '='
+                )
+            )
         ));
+        
+        // Filter to only orders completed today
+        $completed_today = array();
+        foreach ($all_completed_orders as $order_id) {
+            $order = wc_get_order($order_id);
+            if ($order) {
+                $completed_at = $order->get_meta('picking_completed_at');
+                if ($completed_at && strtotime($completed_at) >= strtotime($today_start)) {
+                    $completed_today[] = $order_id;
+                }
+            }
+        }
         
         // Get picker activity
         $users = get_option('picking_registered_users', array());
