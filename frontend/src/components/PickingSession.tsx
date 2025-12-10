@@ -458,27 +458,66 @@ function PickingSession() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+      <Box sx={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        mb: 3,
+        flexDirection: { xs: 'column', sm: 'row' },
+        gap: { xs: 1, sm: 0 }
+      }}>
         <Button
           startIcon={<ArrowBack />}
           onClick={() => navigate('/orders')}
-          sx={{ mr: 2 }}
+          sx={{ 
+            mr: { xs: 0, sm: 2 },
+            alignSelf: { xs: 'flex-start', sm: 'center' }
+          }}
         >
           Volver
         </Button>
-        <Typography variant="h4" component="h1">
+        <Typography 
+          variant="h4" 
+          component="h1"
+          sx={{ 
+            fontSize: { xs: '1.5rem', sm: '2rem', md: '2.125rem' },
+            textAlign: { xs: 'center', sm: 'left' },
+            width: { xs: '100%', sm: 'auto' }
+          }}
+        >
           Sesión de Picking
         </Typography>
       </Box>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert 
+          severity="error" 
+          sx={{ 
+            mb: 2,
+            fontSize: { xs: '1rem', sm: '0.875rem' },
+            py: { xs: 1.5, sm: 1 },
+            '& .MuiAlert-message': {
+              width: '100%',
+              textAlign: { xs: 'center', sm: 'left' }
+            }
+          }}
+        >
           {error}
         </Alert>
       )}
 
       {success && (
-        <Alert severity="success" sx={{ mb: 2 }}>
+        <Alert 
+          severity="success" 
+          sx={{ 
+            mb: 2,
+            fontSize: { xs: '1rem', sm: '0.875rem' },
+            py: { xs: 1.5, sm: 1 },
+            '& .MuiAlert-message': {
+              width: '100%',
+              textAlign: { xs: 'center', sm: 'left' }
+            }
+          }}
+        >
           {success}
         </Alert>
       )}
@@ -557,27 +596,45 @@ function PickingSession() {
                   />
                 )}
                 <Box sx={{ flex: 1 }}>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 'bold', fontSize: { xs: '1rem', sm: '1.1rem' } }}>
                     {line.name}
                     {line.is_manual && (
                       <Chip label="Manual" size="small" color="info" sx={{ ml: 1 }} />
                     )}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: '0.85rem', sm: '0.9rem' } }}>
                     SKU: {line.sku || '-'}
                   </Typography>
-                  {(line.ean || line.ian) && (
-                    <Typography variant="body2" color="text.secondary">
-                      EAN/IAN: {line.ean || line.ian || '-'}
-                    </Typography>
+                  {(line.ean || line.ian || line.gtin) && (
+                    <Box sx={{ 
+                      mt: 0.5, 
+                      p: 0.75, 
+                      bgcolor: 'primary.50', 
+                      borderRadius: 1,
+                      border: '1px solid',
+                      borderColor: 'primary.200'
+                    }}>
+                      <Typography variant="body2" sx={{ fontWeight: 'medium', color: 'primary.main', fontSize: { xs: '0.85rem', sm: '0.9rem' } }}>
+                        EAN: {line.ean || line.ian || line.gtin || '-'}
+                      </Typography>
+                    </Box>
                   )}
                   {line.cnd && (
-                    <Typography variant="body2" color="text.secondary">
-                      CND: {line.cnd}
-                    </Typography>
+                    <Box sx={{ 
+                      mt: 0.5, 
+                      p: 0.75, 
+                      bgcolor: 'secondary.50', 
+                      borderRadius: 1,
+                      border: '1px solid',
+                      borderColor: 'secondary.200'
+                    }}>
+                      <Typography variant="body2" sx={{ fontWeight: 'medium', color: 'secondary.main', fontSize: { xs: '0.85rem', sm: '0.9rem' } }}>
+                        CND: {line.cnd}
+                      </Typography>
+                    </Box>
                   )}
                   {line.is_manual && line.added_by && (
-                    <Typography variant="caption" color="text.secondary" display="block">
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
                       Agregado por: {line.added_by}
                     </Typography>
                   )}
@@ -595,27 +652,63 @@ function PickingSession() {
             
             <Divider sx={{ my: 1.5 }} />
             
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Typography variant="body2">
+            <Box sx={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              flexDirection: { xs: 'column', sm: 'row' },
+              gap: { xs: 1, sm: 0 }
+            }}>
+              <Typography variant="body2" sx={{ fontSize: { xs: '0.95rem', sm: '0.875rem' } }}>
                 {line.picked_qty} de {line.quantity} recogidos
               </Typography>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Box sx={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: { xs: 2, sm: 1 },
+                bgcolor: { xs: 'grey.100', sm: 'transparent' },
+                borderRadius: 2,
+                p: { xs: 1, sm: 0 }
+              }}>
                 <IconButton
-                  size="small"
                   onClick={() => handleUpdateQuantity(line.item_id, Math.max(0, line.picked_qty - 1))}
                   disabled={updatingQty === line.item_id || line.picked_qty <= 0}
+                  sx={{ 
+                    width: { xs: 48, sm: 32 },
+                    height: { xs: 48, sm: 32 },
+                    bgcolor: 'background.paper',
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    '&:hover': { bgcolor: 'grey.200' }
+                  }}
                 >
                   <Remove />
                 </IconButton>
-                <Typography variant="h6" sx={{ minWidth: 30, textAlign: 'center' }}>
-                  {updatingQty === line.item_id ? <CircularProgress size={20} /> : line.picked_qty}
+                <Typography variant="h6" sx={{ 
+                  minWidth: { xs: 50, sm: 30 }, 
+                  textAlign: 'center',
+                  fontSize: { xs: '1.5rem', sm: '1.25rem' }
+                }}>
+                  {updatingQty === line.item_id ? <CircularProgress size={24} /> : line.picked_qty}
                 </Typography>
                 <IconButton
-                  size="small"
                   onClick={() => handleUpdateQuantity(line.item_id, line.picked_qty + 1)}
                   disabled={updatingQty === line.item_id || line.picked_qty >= line.quantity}
                   color={line.picked_qty >= line.quantity ? 'default' : 'primary'}
                   title={line.picked_qty >= line.quantity ? 'Este producto ya ha sido escaneado completamente' : 'Aumentar cantidad'}
+                  sx={{ 
+                    width: { xs: 48, sm: 32 },
+                    height: { xs: 48, sm: 32 },
+                    bgcolor: line.picked_qty >= line.quantity ? 'grey.200' : 'primary.main',
+                    color: line.picked_qty >= line.quantity ? 'text.disabled' : 'white',
+                    '&:hover': { 
+                      bgcolor: line.picked_qty >= line.quantity ? 'grey.300' : 'primary.dark' 
+                    },
+                    '&.Mui-disabled': {
+                      bgcolor: 'grey.200',
+                      color: 'text.disabled'
+                    }
+                  }}
                 >
                   <Add />
                 </IconButton>
@@ -631,36 +724,64 @@ function PickingSession() {
 
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Typography variant="h6" gutterBottom>
+          <Typography variant="h6" gutterBottom sx={{ fontSize: { xs: '1.1rem', sm: '1.25rem' } }}>
             Escanear Producto
           </Typography>
-          <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+          <Box sx={{ 
+            display: 'flex', 
+            flexDirection: { xs: 'column', sm: 'row' },
+            gap: { xs: 1.5, sm: 1 }, 
+            mb: 2 
+          }}>
             <TextField
               fullWidth
               label="EAN / Código de barras"
               value={scanValue}
               onChange={(e) => setScanValue(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handleScan()}
-              placeholder="Escanee o ingrese el código EAN"
+              placeholder="Escanee o ingrese el código EAN, CND o SKU"
+              sx={{
+                '& .MuiInputBase-root': {
+                  fontSize: { xs: '1rem', sm: '0.9rem' },
+                  minHeight: { xs: 56, sm: 40 }
+                }
+              }}
             />
-            <Button
-              variant="outlined"
-              onClick={() => setScannerOpen(true)}
-              disabled={scanning}
-              startIcon={<PhotoCamera />}
-              sx={{ minWidth: 100 }}
-            >
-              Cámara
-            </Button>
-            <Button
-              variant="contained"
-              onClick={() => handleScan()}
-              disabled={scanning || !scanValue.trim()}
-              startIcon={scanning ? <CircularProgress size={20} /> : <QrCodeScanner />}
-              sx={{ minWidth: 120 }}
-            >
-              {scanning ? 'Escaneando...' : 'Escanear'}
-            </Button>
+            <Box sx={{ 
+              display: 'flex', 
+              gap: 1,
+              flexDirection: { xs: 'row', sm: 'row' },
+              width: { xs: '100%', sm: 'auto' }
+            }}>
+              <Button
+                variant="outlined"
+                onClick={() => setScannerOpen(true)}
+                disabled={scanning}
+                startIcon={<PhotoCamera />}
+                sx={{ 
+                  minWidth: { xs: 'auto', sm: 100 },
+                  flex: { xs: 1, sm: 'none' },
+                  py: { xs: 1.5, sm: 1 },
+                  fontSize: { xs: '0.9rem', sm: '0.875rem' }
+                }}
+              >
+                Cámara
+              </Button>
+              <Button
+                variant="contained"
+                onClick={() => handleScan()}
+                disabled={scanning || !scanValue.trim()}
+                startIcon={scanning ? <CircularProgress size={20} /> : <QrCodeScanner />}
+                sx={{ 
+                  minWidth: { xs: 'auto', sm: 120 },
+                  flex: { xs: 1, sm: 'none' },
+                  py: { xs: 1.5, sm: 1 },
+                  fontSize: { xs: '0.9rem', sm: '0.875rem' }
+                }}
+              >
+                {scanning ? 'Escaneando...' : 'Escanear'}
+              </Button>
+            </Box>
           </Box>
         </CardContent>
       </Card>
