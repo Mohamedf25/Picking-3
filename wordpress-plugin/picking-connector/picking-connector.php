@@ -67,6 +67,10 @@ class Picking_Connector {
         $this->loader->add_action('wp_ajax_picking_test_connection', $admin, 'ajax_test_connection');
         $this->loader->add_action('wp_ajax_picking_reset_order_data', $admin, 'ajax_reset_order_data');
         $this->loader->add_action('wp_ajax_picking_save_features', $admin, 'ajax_save_features');
+        $this->loader->add_action('wp_ajax_picking_save_permissions', $admin, 'ajax_save_permissions');
+        $this->loader->add_action('wp_ajax_picking_save_retention', $admin, 'ajax_save_retention');
+        $this->loader->add_action('wp_ajax_picking_cleanup_photos', $admin, 'ajax_cleanup_photos');
+        $this->loader->add_action('wp_ajax_picking_save_status_config', $admin, 'ajax_save_status_config');
         
         // User management AJAX actions
         $this->loader->add_action('wp_ajax_picking_add_user', $admin, 'ajax_add_user');

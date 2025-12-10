@@ -248,6 +248,10 @@ if (!defined('ABSPATH')) {
                                 <input type="checkbox" name="enable_manual_products" value="1" <?php checked(get_option('picking_enable_manual_products', '1'), '1'); ?>>
                                 <?php esc_html_e('Permitir agregar productos manualmente', 'picking-connector'); ?>
                             </label>
+                            <label>
+                                <input type="checkbox" name="enable_restart_picking" value="1" <?php checked(get_option('picking_enable_restart_picking', '0'), '1'); ?>>
+                                <?php esc_html_e('Permitir reiniciar picking de pedidos', 'picking-connector'); ?>
+                            </label>
                         </div>
                     </div>
                     
@@ -294,6 +298,198 @@ if (!defined('ABSPATH')) {
                 <button type="submit" class="button button-primary">
                     <span class="dashicons dashicons-saved"></span>
                     <?php esc_html_e('Guardar Funciones', 'picking-connector'); ?>
+                </button>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Role Permissions Card -->
+    <div class="picking-card">
+        <h3>
+            <span class="dashicons dashicons-groups"></span>
+            <?php esc_html_e('Permisos por Rol', 'picking-connector'); ?>
+        </h3>
+        <p class="description"><?php esc_html_e('Configura que puede hacer cada rol de usuario en la aplicacion web.', 'picking-connector'); ?></p>
+        
+        <?php
+        $role_permissions = get_option('picking_role_permissions', array());
+        $default_permissions = array(
+            'admin' => array(
+                'can_view_orders' => true,
+                'can_edit_picking' => true,
+                'can_view_audit' => true,
+                'can_view_photos' => true,
+                'can_restart_picking' => true,
+                'can_manage_settings' => true,
+            ),
+            'supervisor' => array(
+                'can_view_orders' => true,
+                'can_edit_picking' => true,
+                'can_view_audit' => true,
+                'can_view_photos' => true,
+                'can_restart_picking' => true,
+                'can_manage_settings' => false,
+            ),
+            'picker' => array(
+                'can_view_orders' => true,
+                'can_edit_picking' => true,
+                'can_view_audit' => false,
+                'can_view_photos' => false,
+                'can_restart_picking' => false,
+                'can_manage_settings' => false,
+            ),
+        );
+        $role_permissions = wp_parse_args($role_permissions, $default_permissions);
+        ?>
+        
+        <form id="picking-permissions-form" class="picking-settings-form">
+            <table class="widefat" style="margin-bottom: 20px;">
+                <thead>
+                    <tr>
+                        <th><?php esc_html_e('Permiso', 'picking-connector'); ?></th>
+                        <th style="text-align: center;"><?php esc_html_e('Admin', 'picking-connector'); ?></th>
+                        <th style="text-align: center;"><?php esc_html_e('Supervisor', 'picking-connector'); ?></th>
+                        <th style="text-align: center;"><?php esc_html_e('Picker', 'picking-connector'); ?></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><?php esc_html_e('Ver pedidos', 'picking-connector'); ?></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_admin_can_view_orders" value="1" <?php checked(!empty($role_permissions['admin']['can_view_orders'])); ?>></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_supervisor_can_view_orders" value="1" <?php checked(!empty($role_permissions['supervisor']['can_view_orders'])); ?>></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_picker_can_view_orders" value="1" <?php checked(!empty($role_permissions['picker']['can_view_orders'])); ?>></td>
+                    </tr>
+                    <tr>
+                        <td><?php esc_html_e('Editar picking', 'picking-connector'); ?></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_admin_can_edit_picking" value="1" <?php checked(!empty($role_permissions['admin']['can_edit_picking'])); ?>></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_supervisor_can_edit_picking" value="1" <?php checked(!empty($role_permissions['supervisor']['can_edit_picking'])); ?>></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_picker_can_edit_picking" value="1" <?php checked(!empty($role_permissions['picker']['can_edit_picking'])); ?>></td>
+                    </tr>
+                    <tr>
+                        <td><?php esc_html_e('Ver auditoria', 'picking-connector'); ?></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_admin_can_view_audit" value="1" <?php checked(!empty($role_permissions['admin']['can_view_audit'])); ?>></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_supervisor_can_view_audit" value="1" <?php checked(!empty($role_permissions['supervisor']['can_view_audit'])); ?>></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_picker_can_view_audit" value="1" <?php checked(!empty($role_permissions['picker']['can_view_audit'])); ?>></td>
+                    </tr>
+                    <tr>
+                        <td><?php esc_html_e('Ver fotos', 'picking-connector'); ?></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_admin_can_view_photos" value="1" <?php checked(!empty($role_permissions['admin']['can_view_photos'])); ?>></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_supervisor_can_view_photos" value="1" <?php checked(!empty($role_permissions['supervisor']['can_view_photos'])); ?>></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_picker_can_view_photos" value="1" <?php checked(!empty($role_permissions['picker']['can_view_photos'])); ?>></td>
+                    </tr>
+                    <tr>
+                        <td><?php esc_html_e('Reiniciar picking', 'picking-connector'); ?></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_admin_can_restart_picking" value="1" <?php checked(!empty($role_permissions['admin']['can_restart_picking'])); ?>></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_supervisor_can_restart_picking" value="1" <?php checked(!empty($role_permissions['supervisor']['can_restart_picking'])); ?>></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_picker_can_restart_picking" value="1" <?php checked(!empty($role_permissions['picker']['can_restart_picking'])); ?>></td>
+                    </tr>
+                    <tr>
+                        <td><?php esc_html_e('Gestionar configuracion', 'picking-connector'); ?></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_admin_can_manage_settings" value="1" <?php checked(!empty($role_permissions['admin']['can_manage_settings'])); ?>></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_supervisor_can_manage_settings" value="1" <?php checked(!empty($role_permissions['supervisor']['can_manage_settings'])); ?>></td>
+                        <td style="text-align: center;"><input type="checkbox" name="perm_picker_can_manage_settings" value="1" <?php checked(!empty($role_permissions['picker']['can_manage_settings'])); ?>></td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <div class="picking-actions">
+                <button type="submit" class="button button-primary">
+                    <span class="dashicons dashicons-saved"></span>
+                    <?php esc_html_e('Guardar Permisos', 'picking-connector'); ?>
+                </button>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Image Retention Card -->
+    <div class="picking-card">
+        <h3>
+            <span class="dashicons dashicons-images-alt2"></span>
+            <?php esc_html_e('Retencion de Imagenes', 'picking-connector'); ?>
+        </h3>
+        <p class="description"><?php esc_html_e('Configura el borrado automatico de imagenes de evidencia antiguas.', 'picking-connector'); ?></p>
+        
+        <form id="picking-retention-form" class="picking-settings-form">
+            <div class="form-group">
+                <label for="photo_retention_days"><?php esc_html_e('Dias de retencion de fotos', 'picking-connector'); ?></label>
+                <input type="number" id="photo_retention_days" name="photo_retention_days" value="<?php echo esc_attr(get_option('picking_photo_retention_days', '0')); ?>" min="0" max="365" style="width: 100px;">
+                <p class="description"><?php esc_html_e('Las fotos mas antiguas que este numero de dias seran eliminadas automaticamente. Ingresa 0 para desactivar el borrado automatico.', 'picking-connector'); ?></p>
+            </div>
+            
+            <div class="form-group">
+                <label><?php esc_html_e('Estado actual', 'picking-connector'); ?></label>
+                <?php
+                $upload_dir = wp_upload_dir();
+                $picking_photos_dir = $upload_dir['basedir'] . '/picking-connector/photos';
+                $total_size = 0;
+                $total_files = 0;
+                if (is_dir($picking_photos_dir)) {
+                    $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($picking_photos_dir));
+                    foreach ($iterator as $file) {
+                        if ($file->isFile()) {
+                            $total_size += $file->getSize();
+                            $total_files++;
+                        }
+                    }
+                }
+                $size_mb = round($total_size / 1024 / 1024, 2);
+                ?>
+                <p class="description" style="background: #f0f0f1; padding: 10px; border-radius: 4px;">
+                    <?php printf(esc_html__('Total de fotos: %d archivos (%s MB)', 'picking-connector'), $total_files, $size_mb); ?>
+                </p>
+            </div>
+            
+            <div class="picking-actions">
+                <button type="submit" class="button button-primary">
+                    <span class="dashicons dashicons-saved"></span>
+                    <?php esc_html_e('Guardar Configuracion', 'picking-connector'); ?>
+                </button>
+                <button type="button" id="picking-cleanup-photos" class="button button-secondary">
+                    <span class="dashicons dashicons-trash"></span>
+                    <?php esc_html_e('Ejecutar Limpieza Ahora', 'picking-connector'); ?>
+                </button>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Order Status Configuration Card -->
+    <div class="picking-card">
+        <h3>
+            <span class="dashicons dashicons-flag"></span>
+            <?php esc_html_e('Configuracion de Estados', 'picking-connector'); ?>
+        </h3>
+        <p class="description"><?php esc_html_e('Configura como cambian los estados de los pedidos durante el proceso de picking.', 'picking-connector'); ?></p>
+        
+        <form id="picking-status-config-form" class="picking-settings-form">
+            <div class="picking-grid">
+                <div>
+                    <div class="form-group">
+                        <label for="picking_started_status"><?php esc_html_e('Estado al iniciar picking', 'picking-connector'); ?></label>
+                        <select id="picking_started_status" name="picking_started_status">
+                            <option value=""><?php esc_html_e('-- No cambiar estado --', 'picking-connector'); ?></option>
+                            <?php foreach ($all_statuses as $status_key => $status_label) : ?>
+                                <option value="<?php echo esc_attr($status_key); ?>" <?php selected(get_option('picking_started_status', ''), $status_key); ?>>
+                                    <?php echo esc_html($status_label); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <p class="description"><?php esc_html_e('Estado de WooCommerce al que cambiara el pedido cuando un picker inicie el picking.', 'picking-connector'); ?></p>
+                    </div>
+                </div>
+                <div>
+                    <div class="form-group">
+                        <label><?php esc_html_e('Nota', 'picking-connector'); ?></label>
+                        <p class="description" style="background: #fff3cd; padding: 10px; border-radius: 4px; border-left: 4px solid #ffc107;">
+                            <?php esc_html_e('El estado "al completar picking" ya esta configurado arriba en la seccion de Configuracion General.', 'picking-connector'); ?>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="picking-actions">
+                <button type="submit" class="button button-primary">
+                    <span class="dashicons dashicons-saved"></span>
+                    <?php esc_html_e('Guardar Estados', 'picking-connector'); ?>
                 </button>
             </div>
         </form>

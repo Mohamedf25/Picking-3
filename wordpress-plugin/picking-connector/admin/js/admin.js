@@ -18,6 +18,10 @@
             $(document).on('click', '.picking-copy-btn', this.copyToClipboard);
             $(document).on('submit', '#picking-settings-form', this.saveSettings);
             $(document).on('submit', '#picking-features-form', this.saveFeatures);
+            $(document).on('submit', '#picking-permissions-form', this.savePermissions);
+            $(document).on('submit', '#picking-retention-form', this.saveRetention);
+            $(document).on('submit', '#picking-status-config-form', this.saveStatusConfig);
+            $(document).on('click', '#picking-cleanup-photos', this.cleanupPhotos);
             $(document).on('change', 'input[name="scanner_type"]', this.updateScannerSelection);
             
             // User management events
@@ -193,6 +197,140 @@
             
             var formData = $form.serialize();
             formData += '&action=picking_save_features&nonce=' + pickingAdmin.nonce;
+            
+            $.ajax({
+                url: pickingAdmin.ajaxUrl,
+                type: 'POST',
+                data: formData,
+                success: function(response) {
+                    if (response.success) {
+                        PickingAdmin.showStatus('success', response.data.message);
+                    } else {
+                        PickingAdmin.showStatus('error', response.data.message);
+                    }
+                },
+                error: function() {
+                    PickingAdmin.showStatus('error', 'Error de conexion');
+                },
+                complete: function() {
+                    $button.prop('disabled', false).html(originalText);
+                }
+            });
+        },
+
+        savePermissions: function(e) {
+            e.preventDefault();
+            
+            var $form = $(this);
+            var $button = $form.find('button[type="submit"]');
+            var originalText = $button.html();
+            
+            $button.prop('disabled', true).html('<span class="dashicons dashicons-update spinning"></span> Guardando...');
+            
+            var formData = $form.serialize();
+            formData += '&action=picking_save_permissions&nonce=' + pickingAdmin.nonce;
+            
+            $.ajax({
+                url: pickingAdmin.ajaxUrl,
+                type: 'POST',
+                data: formData,
+                success: function(response) {
+                    if (response.success) {
+                        PickingAdmin.showStatus('success', response.data.message);
+                    } else {
+                        PickingAdmin.showStatus('error', response.data.message);
+                    }
+                },
+                error: function() {
+                    PickingAdmin.showStatus('error', 'Error de conexion');
+                },
+                complete: function() {
+                    $button.prop('disabled', false).html(originalText);
+                }
+            });
+        },
+
+        saveRetention: function(e) {
+            e.preventDefault();
+            
+            var $form = $(this);
+            var $button = $form.find('button[type="submit"]');
+            var originalText = $button.html();
+            
+            $button.prop('disabled', true).html('<span class="dashicons dashicons-update spinning"></span> Guardando...');
+            
+            var formData = $form.serialize();
+            formData += '&action=picking_save_retention&nonce=' + pickingAdmin.nonce;
+            
+            $.ajax({
+                url: pickingAdmin.ajaxUrl,
+                type: 'POST',
+                data: formData,
+                success: function(response) {
+                    if (response.success) {
+                        PickingAdmin.showStatus('success', response.data.message);
+                    } else {
+                        PickingAdmin.showStatus('error', response.data.message);
+                    }
+                },
+                error: function() {
+                    PickingAdmin.showStatus('error', 'Error de conexion');
+                },
+                complete: function() {
+                    $button.prop('disabled', false).html(originalText);
+                }
+            });
+        },
+
+        cleanupPhotos: function(e) {
+            e.preventDefault();
+            
+            if (!confirm('Esta seguro de que desea ejecutar la limpieza de fotos ahora? Se eliminaran las fotos mas antiguas que el numero de dias configurado.')) {
+                return;
+            }
+            
+            var $button = $(this);
+            var originalText = $button.html();
+            
+            $button.prop('disabled', true).html('<span class="dashicons dashicons-update spinning"></span> Limpiando...');
+            
+            $.ajax({
+                url: pickingAdmin.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'picking_cleanup_photos',
+                    nonce: pickingAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        PickingAdmin.showStatus('success', response.data.message);
+                        setTimeout(function() {
+                            location.reload();
+                        }, 1500);
+                    } else {
+                        PickingAdmin.showStatus('error', response.data.message);
+                    }
+                },
+                error: function() {
+                    PickingAdmin.showStatus('error', 'Error de conexion');
+                },
+                complete: function() {
+                    $button.prop('disabled', false).html(originalText);
+                }
+            });
+        },
+
+        saveStatusConfig: function(e) {
+            e.preventDefault();
+            
+            var $form = $(this);
+            var $button = $form.find('button[type="submit"]');
+            var originalText = $button.html();
+            
+            $button.prop('disabled', true).html('<span class="dashicons dashicons-update spinning"></span> Guardando...');
+            
+            var formData = $form.serialize();
+            formData += '&action=picking_save_status_config&nonce=' + pickingAdmin.nonce;
             
             $.ajax({
                 url: pickingAdmin.ajaxUrl,

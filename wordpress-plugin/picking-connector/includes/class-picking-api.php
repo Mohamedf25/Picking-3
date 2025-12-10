@@ -245,6 +245,18 @@ class Picking_API {
             'callback' => array($this, 'get_all_photos'),
             'permission_callback' => '__return_true',
         ));
+        
+        register_rest_route($namespace, '/restart-picking', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'restart_picking'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/get-audit-orders', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_audit_orders'),
+            'permission_callback' => '__return_true',
+        ));
     }
     
     public function debug_auth($request) {
@@ -1716,15 +1728,23 @@ class Picking_API {
     
     /**
      * Get role permissions
+     * Now uses configurable permissions from plugin settings
      */
     private function get_role_permissions($role) {
-        $permissions = array(
+        // Default permissions (backward compatible)
+        $default_permissions = array(
             'admin' => array(
                 'can_view_all_orders' => true,
                 'can_process_orders' => true,
                 'can_view_stats' => true,
                 'can_manage_users' => true,
                 'can_view_dashboard' => true,
+                'can_view_orders' => true,
+                'can_edit_picking' => true,
+                'can_view_audit' => true,
+                'can_view_photos' => true,
+                'can_restart_picking' => true,
+                'can_manage_settings' => true,
             ),
             'supervisor' => array(
                 'can_view_all_orders' => true,
@@ -1732,6 +1752,12 @@ class Picking_API {
                 'can_view_stats' => true,
                 'can_manage_users' => false,
                 'can_view_dashboard' => true,
+                'can_view_orders' => true,
+                'can_edit_picking' => true,
+                'can_view_audit' => true,
+                'can_view_photos' => true,
+                'can_restart_picking' => true,
+                'can_manage_settings' => false,
             ),
             'picker' => array(
                 'can_view_all_orders' => false,
@@ -1739,8 +1765,27 @@ class Picking_API {
                 'can_view_stats' => false,
                 'can_manage_users' => false,
                 'can_view_dashboard' => false,
+                'can_view_orders' => true,
+                'can_edit_picking' => true,
+                'can_view_audit' => false,
+                'can_view_photos' => false,
+                'can_restart_picking' => false,
+                'can_manage_settings' => false,
             ),
         );
+        
+        // Get configured permissions from database
+        $configured_permissions = get_option('picking_role_permissions', array());
+        
+        // Merge configured permissions with defaults
+        $permissions = $default_permissions;
+        if (!empty($configured_permissions) && is_array($configured_permissions)) {
+            foreach ($configured_permissions as $config_role => $config_perms) {
+                if (isset($permissions[$config_role]) && is_array($config_perms)) {
+                    $permissions[$config_role] = array_merge($permissions[$config_role], $config_perms);
+                }
+            }
+        }
         
         return isset($permissions[$role]) ? $permissions[$role] : $permissions['picker'];
     }
@@ -2836,6 +2881,16 @@ class Picking_API {
             return $this->unauthorized_response();
         }
         
+        // Get user role if appuser is provided
+        $appuser = $request->get_param('appuser') ? sanitize_text_field($request->get_param('appuser')) : '';
+        $user_role = 'picker'; // Default role
+        $user_permissions = array();
+        
+        if (!empty($appuser)) {
+            $user_role = $this->get_user_role_by_name($appuser);
+            $user_permissions = $this->get_role_permissions($user_role);
+        }
+        
         return array(
             'success' => true,
             'features' => array(
@@ -2846,13 +2901,19 @@ class Picking_API {
                 'audit_viewing' => get_option('picking_enable_audit_viewing', '1') === '1',
                 'order_management' => get_option('picking_enable_order_management', '1') === '1',
                 'user_management' => get_option('picking_enable_user_management', '1') === '1',
+                'restart_picking' => get_option('picking_enable_restart_picking', '0') === '1',
             ),
             'settings' => array(
                 'batch_size' => (int) get_option('picking_batch_size', 1),
                 'auto_complete' => get_option('picking_auto_complete', '1') === '1',
                 'photo_required' => get_option('picking_photo_required', '1') === '1',
                 'scanner_type' => get_option('picking_scanner_type', 'camera'),
+                'photo_retention_days' => (int) get_option('picking_photo_retention_days', 0),
+                'started_status' => get_option('picking_started_status', ''),
+                'completed_status' => get_option('picking_completed_status', 'wc-completed'),
             ),
+            'user_role' => $user_role,
+            'user_permissions' => $user_permissions,
         );
     }
     
@@ -3075,5 +3136,256 @@ class Picking_API {
             'message' => __('Producto eliminado correctamente.', 'picking-connector'),
             'item_id' => $item_id,
         );
+    }
+    
+    /**
+     * Restart picking for an order
+     * Clears picking state but preserves audit history
+     */
+    public function restart_picking($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        // Check if restart picking is enabled globally
+        $restart_enabled = get_option('picking_enable_restart_picking', '0');
+        if ($restart_enabled !== '1') {
+            return new WP_Error('restart_disabled', __('La funcion de reiniciar picking esta deshabilitada.', 'picking-connector'), array('status' => 403));
+        }
+        
+        // Validate user is active and has permission
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? absint($data['order_id']) : 0;
+        $appuser = isset($data['appuser']) ? sanitize_text_field($data['appuser']) : '';
+        $reason = isset($data['reason']) ? sanitize_text_field($data['reason']) : '';
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        // Check if order has been picked before (has picking history)
+        $picking_status = $order->get_meta('picking_status');
+        $picking_started_at = $order->get_meta('picking_started_at');
+        
+        if (empty($picking_status) && empty($picking_started_at)) {
+            return new WP_Error('never_picked', __('Este pedido nunca ha sido trabajado por la app de picking.', 'picking-connector'), array('status' => 400));
+        }
+        
+        // Check user permission for restart
+        $user_role = $this->get_user_role_by_name($appuser);
+        $permissions = $this->get_role_permissions($user_role);
+        
+        if (empty($permissions['can_restart_picking'])) {
+            return new WP_Error('no_permission', __('No tienes permiso para reiniciar picking.', 'picking-connector'), array('status' => 403));
+        }
+        
+        // Create snapshot of current state before reset
+        $snapshot = array(
+            'picking_status' => $picking_status,
+            'user_claimed' => $order->get_meta('user_claimed'),
+            'picking_started_at' => $picking_started_at,
+            'picking_completed_at' => $order->get_meta('picking_completed_at'),
+            'items_state' => array(),
+        );
+        
+        // Capture item states
+        foreach ($order->get_items() as $item_id => $item) {
+            $snapshot['items_state'][$item_id] = array(
+                'picked_qty' => $item->get_meta('picked_qty'),
+                'picking_status' => $item->get_meta('picking_status'),
+            );
+        }
+        
+        // Record audit event for restart
+        $this->record_audit_event($order, 'picking_restarted', $appuser, array(
+            'reason' => $reason,
+            'previous_state' => $snapshot,
+        ));
+        
+        // Reset order picking state
+        $order->update_meta_data('picking_status', '');
+        $order->update_meta_data('user_claimed', '');
+        $order->update_meta_data('picking_started_at', '');
+        $order->update_meta_data('picking_completed_at', '');
+        
+        // Reset item picking states
+        foreach ($order->get_items() as $item_id => $item) {
+            $item->update_meta_data('picked_qty', 0);
+            $item->update_meta_data('picking_status', '');
+            $item->save();
+        }
+        
+        // Update WooCommerce status to configured "start" status if set
+        $started_status = get_option('picking_started_status', '');
+        if (!empty($started_status)) {
+            // Get eligible statuses
+            $eligible_statuses = get_option('picking_order_status', array('wc-processing'));
+            if (!is_array($eligible_statuses)) {
+                $eligible_statuses = array($eligible_statuses);
+            }
+            
+            // Only change if the target status is in eligible statuses
+            if (in_array($started_status, $eligible_statuses)) {
+                $order->set_status(str_replace('wc-', '', $started_status));
+            }
+        }
+        
+        // Add order note
+        $order->add_order_note(sprintf(
+            __('Picking reiniciado por %s. Razon: %s', 'picking-connector'),
+            $appuser,
+            $reason ?: __('No especificada', 'picking-connector')
+        ));
+        
+        $order->save();
+        
+        return array(
+            'success' => true,
+            'message' => __('Picking reiniciado correctamente. El historial anterior se ha preservado en la auditoria.', 'picking-connector'),
+            'order_id' => $order_id,
+        );
+    }
+    
+    /**
+     * Get orders that have been worked by the picking app (for audit)
+     * Only returns orders with picking activity
+     */
+    public function get_audit_orders($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $page = $request->get_param('page') ? absint($request->get_param('page')) : 1;
+        $per_page = $request->get_param('per_page') ? absint($request->get_param('per_page')) : 20;
+        $status = $request->get_param('status') ? sanitize_text_field($request->get_param('status')) : '';
+        $search = $request->get_param('search') ? sanitize_text_field($request->get_param('search')) : '';
+        $date_from = $request->get_param('date_from') ? sanitize_text_field($request->get_param('date_from')) : '';
+        $date_to = $request->get_param('date_to') ? sanitize_text_field($request->get_param('date_to')) : '';
+        
+        // Build query args - only get orders that have been worked by the app
+        $args = array(
+            'limit' => $per_page,
+            'offset' => ($page - 1) * $per_page,
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'meta_query' => array(
+                'relation' => 'OR',
+                array(
+                    'key' => 'picking_status',
+                    'value' => '',
+                    'compare' => '!=',
+                ),
+                array(
+                    'key' => 'picking_started_at',
+                    'value' => '',
+                    'compare' => '!=',
+                ),
+                array(
+                    'key' => 'picking_audit_log',
+                    'compare' => 'EXISTS',
+                ),
+                array(
+                    'key' => 'picking_photos',
+                    'compare' => 'EXISTS',
+                ),
+            ),
+        );
+        
+        if (!empty($status)) {
+            $args['status'] = $status;
+        }
+        
+        if (!empty($search)) {
+            $args['s'] = $search;
+        }
+        
+        if (!empty($date_from)) {
+            $args['date_created'] = '>=' . $date_from;
+        }
+        
+        if (!empty($date_to)) {
+            if (!empty($args['date_created'])) {
+                $args['date_created'] = array($date_from . '...' . $date_to);
+            } else {
+                $args['date_created'] = '<=' . $date_to;
+            }
+        }
+        
+        $orders = wc_get_orders($args);
+        
+        // Get total count for pagination
+        $count_args = $args;
+        $count_args['limit'] = -1;
+        $count_args['return'] = 'ids';
+        unset($count_args['offset']);
+        $total_orders = count(wc_get_orders($count_args));
+        
+        $result = array();
+        foreach ($orders as $order) {
+            $picking_status = $order->get_meta('picking_status');
+            $user_claimed = $order->get_meta('user_claimed');
+            $picking_started_at = $order->get_meta('picking_started_at');
+            $picking_completed_at = $order->get_meta('picking_completed_at');
+            $photos = $order->get_meta('picking_photos');
+            $audit_log = $order->get_meta('picking_audit_log');
+            $picking_users = $order->get_meta('picking_users');
+            
+            $result[] = array(
+                'id' => $order->get_id(),
+                'number' => $order->get_order_number(),
+                'status' => $order->get_status(),
+                'date_created' => $order->get_date_created() ? $order->get_date_created()->format('Y-m-d H:i:s') : null,
+                'total' => $order->get_total(),
+                'customer_name' => $order->get_formatted_billing_full_name(),
+                'picking_status' => $picking_status,
+                'user_claimed' => $user_claimed,
+                'picking_started_at' => $picking_started_at,
+                'picking_completed_at' => $picking_completed_at,
+                'photos_count' => is_array($photos) ? count($photos) : 0,
+                'audit_events_count' => is_array($audit_log) ? count($audit_log) : 0,
+                'picking_users' => is_array($picking_users) ? $picking_users : array(),
+            );
+        }
+        
+        return array(
+            'success' => true,
+            'orders' => $result,
+            'total' => $total_orders,
+            'page' => $page,
+            'per_page' => $per_page,
+            'total_pages' => ceil($total_orders / $per_page),
+        );
+    }
+    
+    /**
+     * Get user role by username
+     */
+    private function get_user_role_by_name($username) {
+        $users = get_option('picking_registered_users', array());
+        
+        foreach ($users as $user) {
+            if (strtolower($user['name']) === strtolower($username)) {
+                return $user['role'];
+            }
+        }
+        
+        return 'picker'; // Default role
     }
 }
