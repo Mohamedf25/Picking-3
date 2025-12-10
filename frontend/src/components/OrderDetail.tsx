@@ -21,8 +21,12 @@ interface LineItem {
   id: number
   name: string
   sku: string
+  ean: string
+  ian: string
+  cnd: string
   quantity: number
   product_id: number
+  image?: string
 }
 
 interface Order {
@@ -80,8 +84,12 @@ function OrderDetail() {
           id: p.item_id || p.product_id,
           name: p.name,
           sku: p.sku || '',
+          ean: p.ean || '',
+          ian: p.ian || '',
+          cnd: p.cnd || '',
           quantity: p.quantity || 1,
-          product_id: p.product_id
+          product_id: p.product_id,
+          image: p.image || ''
         }))
       })
     } catch (err) {
@@ -193,19 +201,45 @@ function OrderDetail() {
             {order.line_items.map((item, index) => (
               <React.Fragment key={item.id}>
                 <ListItem sx={{ px: 0 }}>
-                  <ListItemText
-                    primary={item.name}
-                    secondary={
-                      <Box>
-                        <Typography variant="body2" color="text.secondary">
-                          SKU: {item.sku || 'Sin SKU'}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Cantidad: {item.quantity}
-                        </Typography>
-                      </Box>
-                    }
-                  />
+                  <Box sx={{ display: 'flex', gap: 2, width: '100%' }}>
+                    {item.image && (
+                      <Box
+                        component="img"
+                        src={item.image}
+                        alt={item.name}
+                        sx={{
+                          width: 60,
+                          height: 60,
+                          objectFit: 'cover',
+                          borderRadius: 1,
+                          border: '1px solid #e0e0e0',
+                        }}
+                      />
+                    )}
+                    <ListItemText
+                      primary={item.name}
+                      secondary={
+                        <Box>
+                          <Typography variant="body2" color="text.secondary">
+                            SKU: {item.sku || '-'}
+                          </Typography>
+                          {(item.ean || item.ian) && (
+                            <Typography variant="body2" color="text.secondary">
+                              EAN/IAN: {item.ean || item.ian}
+                            </Typography>
+                          )}
+                          {item.cnd && (
+                            <Typography variant="body2" color="text.secondary">
+                              CND: {item.cnd}
+                            </Typography>
+                          )}
+                          <Typography variant="body2" color="text.secondary">
+                            Cantidad: {item.quantity}
+                          </Typography>
+                        </Box>
+                      }
+                    />
+                  </Box>
                 </ListItem>
                 {index < order.line_items.length - 1 && <Divider />}
               </React.Fragment>

@@ -196,6 +196,55 @@ class Picking_API {
             'callback' => array($this, 'get_dashboard_stats'),
             'permission_callback' => '__return_true',
         ));
+        
+        // New endpoints for expanded functionality
+        register_rest_route($namespace, '/get-all-orders', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_all_orders'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/get-order-history', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_order_history'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/get-order-photos', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_order_photos'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/get-feature-settings', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_feature_settings'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/update-order-line', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'update_order_line'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/add-order-line', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'add_order_line'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/remove-order-line', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'remove_order_line'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/get-all-photos', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_all_photos'),
+            'permission_callback' => '__return_true',
+        ));
     }
     
     public function debug_auth($request) {
@@ -410,6 +459,99 @@ class Picking_API {
         }
     }
     
+    /**
+     * Get all barcode fields for a product (EAN, IAN, CND, GTIN).
+     * Searches multiple meta keys used by different barcode plugins.
+     * 
+     * @param WC_Product $product The WooCommerce product object
+     * @return array Array with 'ean', 'ian', 'cnd', 'gtin' keys
+     */
+    private function get_product_barcodes($product) {
+        $barcodes = array(
+            'ean' => '',
+            'ian' => '',
+            'cnd' => '',
+            'gtin' => '',
+        );
+        
+        // EAN meta keys (European Article Number)
+        $ean_meta_keys = array('_alg_ean', '_ean', 'ean', '_barcode', 'barcode');
+        foreach ($ean_meta_keys as $meta_key) {
+            $value = $product->get_meta($meta_key);
+            if (!empty($value)) {
+                $barcodes['ean'] = $value;
+                break;
+            }
+        }
+        
+        // IAN meta keys (International Article Number - same as EAN but different naming)
+        $ian_meta_keys = array('_ian', 'ian', '_alg_ian');
+        foreach ($ian_meta_keys as $meta_key) {
+            $value = $product->get_meta($meta_key);
+            if (!empty($value)) {
+                $barcodes['ian'] = $value;
+                break;
+            }
+        }
+        // If IAN is empty but EAN exists, use EAN as IAN (they're often the same)
+        if (empty($barcodes['ian']) && !empty($barcodes['ean'])) {
+            $barcodes['ian'] = $barcodes['ean'];
+        }
+        
+        // CND meta keys (Codigo Nacional de Drogas - pharmaceutical code)
+        $cnd_meta_keys = array('_cnd', 'cnd', '_codigo_nacional', 'codigo_nacional', '_cn', 'cn');
+        foreach ($cnd_meta_keys as $meta_key) {
+            $value = $product->get_meta($meta_key);
+            if (!empty($value)) {
+                $barcodes['cnd'] = $value;
+                break;
+            }
+        }
+        
+        // GTIN meta keys (Global Trade Item Number)
+        $gtin_meta_keys = array('_gtin', 'gtin', '_alg_gtin');
+        foreach ($gtin_meta_keys as $meta_key) {
+            $value = $product->get_meta($meta_key);
+            if (!empty($value)) {
+                $barcodes['gtin'] = $value;
+                break;
+            }
+        }
+        
+        return $barcodes;
+    }
+    
+    /**
+     * Record an audit event for picking operations.
+     * Stores events in order meta for complete audit trail.
+     * 
+     * @param WC_Order $order The WooCommerce order object
+     * @param string $event_type Type of event (started, scanned, photo_uploaded, completed, edited, etc.)
+     * @param string $appuser The username who performed the action
+     * @param array $details Additional event details
+     */
+    private function record_audit_event($order, $event_type, $appuser, $details = array()) {
+        $audit_log = $order->get_meta('picking_audit_log');
+        if (!is_array($audit_log)) {
+            $audit_log = array();
+        }
+        
+        $event = array(
+            'event_id' => 'evt_' . time() . '_' . wp_rand(1000, 9999),
+            'event_type' => $event_type,
+            'user' => $appuser,
+            'timestamp' => current_time('mysql'),
+            'timestamp_unix' => time(),
+            'details' => $details,
+        );
+        
+        $audit_log[] = $event;
+        $order->update_meta_data('picking_audit_log', $audit_log);
+        $order->save();
+        
+        return $event;
+    }
+    
     public function get_settings($request) {
         if (!$this->validate_token($request)) {
             return $this->unauthorized_response();
@@ -557,14 +699,8 @@ class Picking_API {
                 continue;
             }
             
-            $ean = '';
-            $ean_meta_keys = array('_alg_ean', '_ean', '_gtin', '_barcode', 'ean', 'gtin', 'barcode');
-            foreach ($ean_meta_keys as $meta_key) {
-                $ean = $product->get_meta($meta_key);
-                if (!empty($ean)) {
-                    break;
-                }
-            }
+            // Get all barcode fields (EAN/IAN, CND, etc.)
+            $barcodes = $this->get_product_barcodes($product);
             
             $image_url = '';
             $image_id = $product->get_image_id();
@@ -582,7 +718,10 @@ class Picking_API {
                 'variation_id' => $item->get_variation_id(),
                 'name' => $item->get_name(),
                 'sku' => $product->get_sku(),
-                'ean' => $ean,
+                'ean' => $barcodes['ean'],
+                'ian' => $barcodes['ian'],
+                'cnd' => $barcodes['cnd'],
+                'gtin' => $barcodes['gtin'],
                 'quantity' => $item->get_quantity(),
                 'picked_qty' => (int) ($picked_qty ?: 0),
                 'backorder' => (int) ($backorder ?: 0),
@@ -604,22 +743,38 @@ class Picking_API {
                     continue;
                 }
                 
+                // Get product details for manual items (image, barcodes)
+                $extra_product = wc_get_product($extra_item['product_id']);
+                $extra_image = '';
+                $extra_barcodes = array('ean' => '', 'ian' => '', 'cnd' => '', 'gtin' => '');
+                
+                if ($extra_product) {
+                    $extra_image_id = $extra_product->get_image_id();
+                    if ($extra_image_id) {
+                        $extra_image = wp_get_attachment_image_url($extra_image_id, 'thumbnail');
+                    }
+                    $extra_barcodes = $this->get_product_barcodes($extra_product);
+                }
+                
                 $products[] = array(
                     'item_id' => $extra_item['item_id'],
                     'product_id' => $extra_item['product_id'],
                     'variation_id' => 0,
                     'name' => $extra_item['name'],
                     'sku' => $extra_item['sku'],
-                    'ean' => isset($extra_item['ean']) ? $extra_item['ean'] : '',
+                    'ean' => !empty($extra_barcodes['ean']) ? $extra_barcodes['ean'] : (isset($extra_item['ean']) ? $extra_item['ean'] : ''),
+                    'ian' => $extra_barcodes['ian'],
+                    'cnd' => $extra_barcodes['cnd'],
+                    'gtin' => $extra_barcodes['gtin'],
                     'quantity' => $extra_item['qty'],
                     'picked_qty' => isset($extra_item['picked_qty']) ? (int) $extra_item['picked_qty'] : (int) $extra_item['qty'],
                     'backorder' => 0,
                     'picking_status' => 'completed',
                     'price' => 0,
-                    'image' => '',
-                    'stock_quantity' => null,
-                    'location' => '',
-                    'weight' => '',
+                    'image' => $extra_image,
+                    'stock_quantity' => $extra_product ? $extra_product->get_stock_quantity() : null,
+                    'location' => $extra_product ? $extra_product->get_meta('_picking_location') : '',
+                    'weight' => $extra_product ? $extra_product->get_weight() : '',
                     'is_manual' => true,
                     'added_by' => isset($extra_item['added_by']) ? $extra_item['added_by'] : '',
                     'added_at' => isset($extra_item['added_at']) ? $extra_item['added_at'] : '',
@@ -784,14 +939,8 @@ class Picking_API {
                 $product_id = $product->get_id();
                 $sku = $product->get_sku();
                 
-                $ean = '';
-                $ean_meta_keys = array('_alg_ean', '_ean', '_gtin', '_barcode', 'ean', 'gtin', 'barcode');
-                foreach ($ean_meta_keys as $meta_key) {
-                    $ean = $product->get_meta($meta_key);
-                    if (!empty($ean)) {
-                        break;
-                    }
-                }
+                // Get all barcode fields
+                $barcodes = $this->get_product_barcodes($product);
                 
                 $key = $product_id . '_' . $item->get_variation_id();
                 
@@ -807,7 +956,10 @@ class Picking_API {
                         'variation_id' => $item->get_variation_id(),
                         'name' => $item->get_name(),
                         'sku' => $sku,
-                        'ean' => $ean,
+                        'ean' => $barcodes['ean'],
+                        'ian' => $barcodes['ian'],
+                        'cnd' => $barcodes['cnd'],
+                        'gtin' => $barcodes['gtin'],
                         'image' => $image_url,
                         'location' => $product->get_meta('_picking_location'),
                         'ordered' => 0,
@@ -2305,6 +2457,622 @@ class Picking_API {
         return array(
             'success' => true,
             'message' => __('Item retirado correctamente.', 'picking-connector'),
+            'item_id' => $item_id,
+        );
+    }
+    
+    /**
+     * Get all orders with filters for the admin dashboard.
+     * Supports filtering by status, date range, and picking status.
+     */
+    public function get_all_orders($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $status = $request->get_param('status');
+        $picking_status = $request->get_param('picking_status');
+        $date_from = $request->get_param('date_from');
+        $date_to = $request->get_param('date_to');
+        $page = $request->get_param('page') ?: 1;
+        $per_page = $request->get_param('per_page') ?: 20;
+        
+        $args = array(
+            'limit' => $per_page,
+            'offset' => ($page - 1) * $per_page,
+            'orderby' => 'date',
+            'order' => 'DESC',
+        );
+        
+        // Filter by WooCommerce status
+        if (!empty($status)) {
+            $args['status'] = $status;
+        } else {
+            // Get all statuses by default
+            $args['status'] = array_keys(wc_get_order_statuses());
+        }
+        
+        // Filter by date range
+        if (!empty($date_from)) {
+            $args['date_created'] = '>=' . $date_from;
+        }
+        if (!empty($date_to)) {
+            if (isset($args['date_created'])) {
+                $args['date_created'] = array($date_from, $date_to);
+            } else {
+                $args['date_created'] = '<=' . $date_to;
+            }
+        }
+        
+        $orders = wc_get_orders($args);
+        
+        // Filter by picking status in PHP if specified
+        if (!empty($picking_status)) {
+            $orders = array_filter($orders, function($order) use ($picking_status) {
+                $order_picking_status = $order->get_meta('picking_status') ?: 'pending';
+                return $order_picking_status === $picking_status;
+            });
+        }
+        
+        $result = array();
+        foreach ($orders as $order) {
+            $order_picking_status = $order->get_meta('picking_status') ?: 'pending';
+            $photos = $order->get_meta('picking_photos');
+            
+            $result[] = array(
+                'order_id' => $order->get_id(),
+                'order_number' => $order->get_order_number(),
+                'status' => $order->get_status(),
+                'picking_status' => $order_picking_status,
+                'user_claimed' => $order->get_meta('user_claimed'),
+                'picking_started_at' => $order->get_meta('picking_started_at'),
+                'picking_completed_at' => $order->get_meta('picking_completed_at'),
+                'picking_completed_by' => $order->get_meta('picking_completed_by'),
+                'picking_users' => $order->get_meta('picking_users') ?: array(),
+                'date_created' => $order->get_date_created()->format('Y-m-d H:i:s'),
+                'date_modified' => $order->get_date_modified()->format('Y-m-d H:i:s'),
+                'customer_name' => $order->get_formatted_billing_full_name(),
+                'customer_email' => $order->get_billing_email(),
+                'total' => $order->get_total(),
+                'currency' => $order->get_currency(),
+                'item_count' => $order->get_item_count(),
+                'has_photos' => is_array($photos) && count($photos) > 0,
+                'photo_count' => is_array($photos) ? count($photos) : 0,
+            );
+        }
+        
+        // Get total count for pagination
+        $count_args = $args;
+        $count_args['limit'] = -1;
+        $count_args['return'] = 'ids';
+        unset($count_args['offset']);
+        $total_orders = wc_get_orders($count_args);
+        
+        return array(
+            'success' => true,
+            'orders' => $result,
+            'total' => count($total_orders),
+            'page' => (int) $page,
+            'per_page' => (int) $per_page,
+            'total_pages' => ceil(count($total_orders) / $per_page),
+        );
+    }
+    
+    /**
+     * Get complete history/audit trail for an order.
+     * Returns all events, users, timestamps, and changes.
+     */
+    public function get_order_history($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $order_id = $request->get_param('order_id');
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        // Get audit log
+        $audit_log = $order->get_meta('picking_audit_log');
+        if (!is_array($audit_log)) {
+            $audit_log = array();
+        }
+        
+        // Get order notes (WooCommerce built-in)
+        $notes = wc_get_order_notes(array(
+            'order_id' => $order_id,
+            'type' => 'internal',
+        ));
+        
+        $notes_data = array();
+        foreach ($notes as $note) {
+            $notes_data[] = array(
+                'id' => $note->id,
+                'content' => $note->content,
+                'date' => $note->date_created->format('Y-m-d H:i:s'),
+                'added_by' => $note->added_by,
+            );
+        }
+        
+        // Get picking metadata
+        $picking_data = array(
+            'status' => $order->get_meta('picking_status') ?: 'pending',
+            'started_at' => $order->get_meta('picking_started_at'),
+            'started_by' => $order->get_meta('picking_started_by'),
+            'completed_at' => $order->get_meta('picking_completed_at'),
+            'completed_by' => $order->get_meta('picking_completed_by'),
+            'users' => $order->get_meta('picking_users') ?: array(),
+            'user_claimed' => $order->get_meta('user_claimed'),
+        );
+        
+        // Get photos
+        $photos = $order->get_meta('picking_photos');
+        if (!is_array($photos)) {
+            $photos = array();
+        }
+        
+        // Get extra items history
+        $extra_items = $order->get_meta('picking_extra_items');
+        if (!is_array($extra_items)) {
+            $extra_items = array();
+        }
+        
+        // Build timeline from all sources
+        $timeline = array();
+        
+        // Add picking start event
+        if (!empty($picking_data['started_at'])) {
+            $timeline[] = array(
+                'event_type' => 'picking_started',
+                'timestamp' => $picking_data['started_at'],
+                'user' => $picking_data['started_by'] ?: $picking_data['user_claimed'],
+                'details' => array('message' => 'Picking iniciado'),
+            );
+        }
+        
+        // Add audit log events
+        foreach ($audit_log as $event) {
+            $timeline[] = $event;
+        }
+        
+        // Add extra items events
+        foreach ($extra_items as $item) {
+            if (!empty($item['added_at'])) {
+                $timeline[] = array(
+                    'event_type' => 'item_added',
+                    'timestamp' => $item['added_at'],
+                    'user' => $item['added_by'],
+                    'details' => array(
+                        'product_name' => $item['name'],
+                        'quantity' => $item['qty'],
+                        'reason' => $item['reason'] ?? '',
+                    ),
+                );
+            }
+            if (!empty($item['removed_at'])) {
+                $timeline[] = array(
+                    'event_type' => 'item_removed',
+                    'timestamp' => $item['removed_at'],
+                    'user' => $item['removed_by'],
+                    'details' => array(
+                        'product_name' => $item['name'],
+                        'reason' => $item['removal_reason'] ?? '',
+                    ),
+                );
+            }
+        }
+        
+        // Add picking complete event
+        if (!empty($picking_data['completed_at'])) {
+            $timeline[] = array(
+                'event_type' => 'picking_completed',
+                'timestamp' => $picking_data['completed_at'],
+                'user' => $picking_data['completed_by'],
+                'details' => array('message' => 'Picking completado'),
+            );
+        }
+        
+        // Sort timeline by timestamp
+        usort($timeline, function($a, $b) {
+            $time_a = strtotime($a['timestamp'] ?? '1970-01-01');
+            $time_b = strtotime($b['timestamp'] ?? '1970-01-01');
+            return $time_a - $time_b;
+        });
+        
+        return array(
+            'success' => true,
+            'order_id' => $order_id,
+            'order_number' => $order->get_order_number(),
+            'picking' => $picking_data,
+            'timeline' => $timeline,
+            'notes' => $notes_data,
+            'photos' => $photos,
+            'extra_items' => $extra_items,
+        );
+    }
+    
+    /**
+     * Get photos for a specific order.
+     */
+    public function get_order_photos($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $order_id = $request->get_param('order_id');
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        $photos = $order->get_meta('picking_photos');
+        if (!is_array($photos)) {
+            $photos = array();
+        }
+        
+        // Get photo details
+        $photo_details = array();
+        foreach ($photos as $photo_url) {
+            // Extract filename and timestamp from URL
+            $filename = basename($photo_url);
+            $timestamp = null;
+            if (preg_match('/^(\d+)_/', $filename, $matches)) {
+                $timestamp = date('Y-m-d H:i:s', (int) $matches[1]);
+            }
+            
+            $photo_details[] = array(
+                'url' => $photo_url,
+                'filename' => $filename,
+                'uploaded_at' => $timestamp,
+            );
+        }
+        
+        return array(
+            'success' => true,
+            'order_id' => $order_id,
+            'order_number' => $order->get_order_number(),
+            'photos' => $photo_details,
+            'count' => count($photo_details),
+        );
+    }
+    
+    /**
+     * Get all photos from all orders (for photo gallery).
+     */
+    public function get_all_photos($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $page = $request->get_param('page') ?: 1;
+        $per_page = $request->get_param('per_page') ?: 50;
+        $date_from = $request->get_param('date_from');
+        $date_to = $request->get_param('date_to');
+        
+        // Get orders with photos
+        $args = array(
+            'limit' => 100,
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'meta_query' => array(
+                array(
+                    'key' => 'picking_photos',
+                    'compare' => 'EXISTS',
+                ),
+            ),
+        );
+        
+        if (!empty($date_from)) {
+            $args['date_created'] = '>=' . $date_from;
+        }
+        
+        $orders = wc_get_orders($args);
+        
+        $all_photos = array();
+        foreach ($orders as $order) {
+            $photos = $order->get_meta('picking_photos');
+            if (!is_array($photos) || empty($photos)) {
+                continue;
+            }
+            
+            foreach ($photos as $photo_url) {
+                $filename = basename($photo_url);
+                $timestamp = null;
+                if (preg_match('/^(\d+)_/', $filename, $matches)) {
+                    $timestamp = date('Y-m-d H:i:s', (int) $matches[1]);
+                }
+                
+                $all_photos[] = array(
+                    'url' => $photo_url,
+                    'filename' => $filename,
+                    'uploaded_at' => $timestamp,
+                    'order_id' => $order->get_id(),
+                    'order_number' => $order->get_order_number(),
+                    'customer_name' => $order->get_formatted_billing_full_name(),
+                );
+            }
+        }
+        
+        // Sort by upload time (newest first)
+        usort($all_photos, function($a, $b) {
+            $time_a = strtotime($a['uploaded_at'] ?? '1970-01-01');
+            $time_b = strtotime($b['uploaded_at'] ?? '1970-01-01');
+            return $time_b - $time_a;
+        });
+        
+        // Paginate
+        $total = count($all_photos);
+        $offset = ($page - 1) * $per_page;
+        $photos_page = array_slice($all_photos, $offset, $per_page);
+        
+        return array(
+            'success' => true,
+            'photos' => $photos_page,
+            'total' => $total,
+            'page' => (int) $page,
+            'per_page' => (int) $per_page,
+            'total_pages' => ceil($total / $per_page),
+        );
+    }
+    
+    /**
+     * Get feature settings that control what's enabled in the web app.
+     */
+    public function get_feature_settings($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        return array(
+            'success' => true,
+            'features' => array(
+                'order_editing' => get_option('picking_enable_order_editing', '1') === '1',
+                'photo_viewing' => get_option('picking_enable_photo_viewing', '1') === '1',
+                'history_viewing' => get_option('picking_enable_history_viewing', '1') === '1',
+                'manual_products' => get_option('picking_enable_manual_products', '1') === '1',
+                'audit_viewing' => get_option('picking_enable_audit_viewing', '1') === '1',
+                'order_management' => get_option('picking_enable_order_management', '1') === '1',
+                'user_management' => get_option('picking_enable_user_management', '1') === '1',
+            ),
+            'settings' => array(
+                'batch_size' => (int) get_option('picking_batch_size', 1),
+                'auto_complete' => get_option('picking_auto_complete', '1') === '1',
+                'photo_required' => get_option('picking_photo_required', '1') === '1',
+                'scanner_type' => get_option('picking_scanner_type', 'camera'),
+            ),
+        );
+    }
+    
+    /**
+     * Update an order line item (quantity, etc.) - for order editing.
+     */
+    public function update_order_line($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        // Check if order editing is enabled
+        if (get_option('picking_enable_order_editing', '1') !== '1') {
+            return new WP_Error('feature_disabled', __('La edicion de pedidos esta deshabilitada.', 'picking-connector'), array('status' => 403));
+        }
+        
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? intval($data['order_id']) : 0;
+        $item_id = isset($data['item_id']) ? intval($data['item_id']) : 0;
+        $quantity = isset($data['quantity']) ? intval($data['quantity']) : null;
+        $appuser = isset($data['appuser']) ? sanitize_text_field($data['appuser']) : '';
+        
+        if (empty($order_id) || empty($item_id)) {
+            return new WP_Error('missing_params', __('ID de pedido e item requeridos.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        $items = $order->get_items();
+        if (!isset($items[$item_id])) {
+            return new WP_Error('item_not_found', __('Item no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        $item = $items[$item_id];
+        $old_quantity = $item->get_quantity();
+        
+        if ($quantity !== null && $quantity !== $old_quantity) {
+            $item->set_quantity($quantity);
+            $item->save();
+            
+            // Record audit event
+            $this->record_audit_event($order, 'quantity_changed', $appuser, array(
+                'item_id' => $item_id,
+                'product_name' => $item->get_name(),
+                'old_quantity' => $old_quantity,
+                'new_quantity' => $quantity,
+            ));
+            
+            // Add order note
+            $order->add_order_note(sprintf(
+                __('Cantidad modificada por %s: %s de %d a %d', 'picking-connector'),
+                $appuser,
+                $item->get_name(),
+                $old_quantity,
+                $quantity
+            ));
+            
+            $order->calculate_totals();
+            $order->save();
+        }
+        
+        return array(
+            'success' => true,
+            'message' => __('Item actualizado correctamente.', 'picking-connector'),
+            'item_id' => $item_id,
+            'new_quantity' => $quantity,
+        );
+    }
+    
+    /**
+     * Add a new line item to an order - for order editing.
+     */
+    public function add_order_line($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        // Check if order editing is enabled
+        if (get_option('picking_enable_order_editing', '1') !== '1') {
+            return new WP_Error('feature_disabled', __('La edicion de pedidos esta deshabilitada.', 'picking-connector'), array('status' => 403));
+        }
+        
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? intval($data['order_id']) : 0;
+        $product_id = isset($data['product_id']) ? intval($data['product_id']) : 0;
+        $quantity = isset($data['quantity']) ? intval($data['quantity']) : 1;
+        $appuser = isset($data['appuser']) ? sanitize_text_field($data['appuser']) : '';
+        
+        if (empty($order_id) || empty($product_id)) {
+            return new WP_Error('missing_params', __('ID de pedido y producto requeridos.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        $product = wc_get_product($product_id);
+        if (!$product) {
+            return new WP_Error('product_not_found', __('Producto no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        // Add the product to the order
+        $item_id = $order->add_product($product, $quantity);
+        
+        if (!$item_id) {
+            return new WP_Error('add_failed', __('Error al agregar el producto.', 'picking-connector'), array('status' => 500));
+        }
+        
+        // Record audit event
+        $this->record_audit_event($order, 'item_added_to_order', $appuser, array(
+            'item_id' => $item_id,
+            'product_id' => $product_id,
+            'product_name' => $product->get_name(),
+            'quantity' => $quantity,
+        ));
+        
+        // Add order note
+        $order->add_order_note(sprintf(
+            __('Producto agregado al pedido por %s: %s x%d', 'picking-connector'),
+            $appuser,
+            $product->get_name(),
+            $quantity
+        ));
+        
+        $order->calculate_totals();
+        $order->save();
+        
+        return array(
+            'success' => true,
+            'message' => __('Producto agregado correctamente.', 'picking-connector'),
+            'item_id' => $item_id,
+            'product_name' => $product->get_name(),
+        );
+    }
+    
+    /**
+     * Remove a line item from an order - for order editing.
+     */
+    public function remove_order_line($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        // Check if order editing is enabled
+        if (get_option('picking_enable_order_editing', '1') !== '1') {
+            return new WP_Error('feature_disabled', __('La edicion de pedidos esta deshabilitada.', 'picking-connector'), array('status' => 403));
+        }
+        
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? intval($data['order_id']) : 0;
+        $item_id = isset($data['item_id']) ? intval($data['item_id']) : 0;
+        $appuser = isset($data['appuser']) ? sanitize_text_field($data['appuser']) : '';
+        
+        if (empty($order_id) || empty($item_id)) {
+            return new WP_Error('missing_params', __('ID de pedido e item requeridos.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        $items = $order->get_items();
+        if (!isset($items[$item_id])) {
+            return new WP_Error('item_not_found', __('Item no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        $item = $items[$item_id];
+        $product_name = $item->get_name();
+        $quantity = $item->get_quantity();
+        
+        // Record audit event before removing
+        $this->record_audit_event($order, 'item_removed_from_order', $appuser, array(
+            'item_id' => $item_id,
+            'product_name' => $product_name,
+            'quantity' => $quantity,
+        ));
+        
+        // Remove the item
+        $order->remove_item($item_id);
+        
+        // Add order note
+        $order->add_order_note(sprintf(
+            __('Producto eliminado del pedido por %s: %s x%d', 'picking-connector'),
+            $appuser,
+            $product_name,
+            $quantity
+        ));
+        
+        $order->calculate_totals();
+        $order->save();
+        
+        return array(
+            'success' => true,
+            'message' => __('Producto eliminado correctamente.', 'picking-connector'),
             'item_id' => $item_id,
         );
     }

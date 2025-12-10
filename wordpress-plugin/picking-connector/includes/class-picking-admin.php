@@ -288,6 +288,30 @@ class Picking_Admin {
         ));
     }
     
+    public function ajax_save_features() {
+        check_ajax_referer('picking_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => __('No tienes permisos.', 'picking-connector')));
+        }
+        
+        $features = array(
+            'picking_enable_order_editing' => isset($_POST['enable_order_editing']) ? '1' : '0',
+            'picking_enable_order_management' => isset($_POST['enable_order_management']) ? '1' : '0',
+            'picking_enable_manual_products' => isset($_POST['enable_manual_products']) ? '1' : '0',
+            'picking_enable_photo_viewing' => isset($_POST['enable_photo_viewing']) ? '1' : '0',
+            'picking_enable_history_viewing' => isset($_POST['enable_history_viewing']) ? '1' : '0',
+            'picking_enable_audit_viewing' => isset($_POST['enable_audit_viewing']) ? '1' : '0',
+            'picking_enable_user_management' => isset($_POST['enable_user_management']) ? '1' : '0',
+        );
+        
+        foreach ($features as $key => $value) {
+            update_option($key, $value);
+        }
+        
+        wp_send_json_success(array('message' => __('Funciones guardadas correctamente.', 'picking-connector')));
+    }
+    
     public function add_picking_order_column($columns) {
         $new_columns = array();
         

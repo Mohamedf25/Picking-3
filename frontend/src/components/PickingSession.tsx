@@ -51,6 +51,9 @@ interface ProductLine {
   item_id: number | string
   product_id: number
   ean: string
+  ian: string
+  cnd: string
+  gtin: string
   sku: string
   name: string
   quantity: number
@@ -531,21 +534,47 @@ function PickingSession() {
         <Card key={line.item_id} sx={{ mb: 2 }}>
           <CardContent sx={{ pb: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <Box sx={{ flex: 1 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-                  {line.name}
-                  {line.is_manual && (
-                    <Chip label="Manual" size="small" color="info" sx={{ ml: 1 }} />
-                  )}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  SKU: {line.sku} {line.ean && `| EAN: ${line.ean}`}
-                </Typography>
-                {line.is_manual && line.added_by && (
-                  <Typography variant="caption" color="text.secondary">
-                    Agregado por: {line.added_by}
-                  </Typography>
+              <Box sx={{ display: 'flex', gap: 2, flex: 1 }}>
+                {line.image && (
+                  <Box
+                    component="img"
+                    src={line.image}
+                    alt={line.name}
+                    sx={{
+                      width: 60,
+                      height: 60,
+                      objectFit: 'cover',
+                      borderRadius: 1,
+                      border: '1px solid #e0e0e0',
+                    }}
+                  />
                 )}
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                    {line.name}
+                    {line.is_manual && (
+                      <Chip label="Manual" size="small" color="info" sx={{ ml: 1 }} />
+                    )}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    SKU: {line.sku || '-'}
+                  </Typography>
+                  {(line.ean || line.ian) && (
+                    <Typography variant="body2" color="text.secondary">
+                      EAN/IAN: {line.ean || line.ian || '-'}
+                    </Typography>
+                  )}
+                  {line.cnd && (
+                    <Typography variant="body2" color="text.secondary">
+                      CND: {line.cnd}
+                    </Typography>
+                  )}
+                  {line.is_manual && line.added_by && (
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Agregado por: {line.added_by}
+                    </Typography>
+                  )}
+                </Box>
               </Box>
               <IconButton
                 size="small"

@@ -11,6 +11,8 @@ import Dashboard from './components/Dashboard'
 import ExceptionManagement from './components/ExceptionManagement'
 import WarehouseManagement from './components/WarehouseManagement'
 import AdminPanel from './components/AdminPanel'
+import OrderManagement from './components/OrderManagement'
+import PhotoGallery from './components/PhotoGallery'
 import Header from './components/Header'
 import OfflineIndicator from './components/OfflineIndicator'
 
@@ -128,6 +130,22 @@ function AppContent(){
               element={
                 <ProtectedRoute>
                   <AdminPanel />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/order-management"
+              element={
+                <ProtectedRoute>
+                  <OrderManagement />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/photos"
+              element={
+                <ProtectedRoute>
+                  <PhotoGallery />
                 </ProtectedRoute>
               }
             />
