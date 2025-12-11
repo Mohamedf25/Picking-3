@@ -15,7 +15,7 @@ import {
 } from '@mui/material'
 import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { ArrowBack, PlayArrow, Person, AttachMoney } from '@mui/icons-material'
+import { ArrowBack, PlayArrow, Person, AttachMoney, History, Engineering } from '@mui/icons-material'
 
 interface LineItem {
   id: number
@@ -29,6 +29,16 @@ interface LineItem {
   image?: string
 }
 
+interface PickingHistoryEvent {
+  event_id: string
+  action: string
+  user: string
+  reason: string
+  timestamp: string
+  timestamp_unix: number
+  details: Record<string, string>
+}
+
 interface Order {
   id: number
   number: string
@@ -39,6 +49,10 @@ interface Order {
   total: string
   customer_name: string
   line_items: LineItem[]
+  user_claimed: string
+  picking_started_by: string
+  picking_users: string[]
+  picking_history: PickingHistoryEvent[]
 }
 
 function OrderDetail() {
@@ -90,7 +104,11 @@ function OrderDetail() {
           quantity: p.quantity || 1,
           product_id: p.product_id,
           image: p.image || ''
-        }))
+        })),
+        user_claimed: data.user_claimed || '',
+        picking_started_by: data.picking_started_by || '',
+        picking_users: data.picking_users || [],
+        picking_history: data.picking_history || [],
       })
     } catch (err) {
       setError('Error al cargar el pedido')
@@ -126,6 +144,32 @@ function OrderDetail() {
       default:
         return status
     }
+  }
+
+  const getActionText = (action: string) => {
+    switch (action) {
+      case 'entered':
+        return 'Entro al picking'
+      case 'exited':
+        return 'Salio del picking'
+      case 'continued':
+        return 'Continuo el picking'
+      case 'reentered':
+        return 'Reingreso al picking'
+      default:
+        return action
+    }
+  }
+
+  const formatHistoryDate = (timestamp: string) => {
+    const date = new Date(timestamp)
+    return date.toLocaleString('es-ES', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
   }
 
   if (loading) {
@@ -248,6 +292,71 @@ function OrderDetail() {
         </CardContent>
       </Card>
 
+      {/* Current Worker Info */}
+      {(order.user_claimed || order.picking_started_by || order.picking_users.length > 0) && (
+        <Card sx={{ mb: 3, bgcolor: 'grey.50' }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+              <Engineering sx={{ mr: 1, color: 'primary.main' }} />
+              <Typography variant="h6">Estado del Picking</Typography>
+            </Box>
+            {order.user_claimed && (
+              <Typography variant="body2" sx={{ mb: 0.5 }}>
+                <strong>Trabajando actualmente:</strong> {order.user_claimed}
+              </Typography>
+            )}
+            {order.picking_started_by && (
+              <Typography variant="body2" sx={{ mb: 0.5 }}>
+                <strong>Iniciado por:</strong> {order.picking_started_by}
+              </Typography>
+            )}
+            {order.picking_users.length > 0 && (
+              <Typography variant="body2">
+                <strong>Usuarios que han trabajado:</strong> {order.picking_users.join(', ')}
+              </Typography>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Picking History */}
+      {order.picking_history.length > 0 && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+              <History sx={{ mr: 1, color: 'primary.main' }} />
+              <Typography variant="h6">Historial de Picking</Typography>
+            </Box>
+            <List dense>
+              {order.picking_history.map((event, index) => (
+                <React.Fragment key={event.event_id}>
+                  <ListItem sx={{ px: 0, py: 1 }}>
+                    <ListItemText
+                      primary={
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                            {event.user} - {getActionText(event.action)}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {formatHistoryDate(event.timestamp)}
+                          </Typography>
+                        </Box>
+                      }
+                      secondary={event.reason && (
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                          Motivo: {event.reason}
+                        </Typography>
+                      )}
+                    />
+                  </ListItem>
+                  {index < order.picking_history.length - 1 && <Divider />}
+                </React.Fragment>
+              ))}
+            </List>
+          </CardContent>
+        </Card>
+      )}
+
       <Button
         variant="contained"
         size="large"
@@ -262,7 +371,7 @@ function OrderDetail() {
 
       {!order.availableForPicking && (
         <Alert severity="info" sx={{ mt: 2 }}>
-          {order.availabilityReasonText || 'Este pedido no está disponible para picking'}
+          {order.availabilityReasonText || 'Este pedido no esta disponible para picking'}
         </Alert>
       )}
     </Box>
