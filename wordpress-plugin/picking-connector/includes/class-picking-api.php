@@ -825,6 +825,7 @@ class Picking_API {
             'availability_reason' => $availability['reason'],
             'availability_reason_text' => $availability['reason_text'],
             'date_created' => $order->get_date_created()->format('Y-m-d H:i:s'),
+            'payment_method' => $order->get_payment_method_title(),
             'customer' => array(
                 'name' => $order->get_formatted_billing_full_name(),
                 'email' => $order->get_billing_email(),
@@ -904,9 +905,9 @@ class Picking_API {
         // Filter by picking_status in PHP instead
         $args = array(
             'status' => $order_status,
-            'limit' => 50, // Fetch more, then filter
+            'limit' => 100, // Fetch more to include pending and in-process orders
             'orderby' => 'date',
-            'order' => 'DESC', // Most recent orders first
+            'order' => 'ASC', // Oldest orders first (FIFO)
         );
         
         // Debug step: after wc_get_orders
@@ -921,27 +922,26 @@ class Picking_API {
         $all_orders = wc_get_orders($args);
         
         // Filter orders in PHP (faster than meta_query with NOT EXISTS)
+        // Include all pending and in-process orders (not completed)
         $orders = array();
         foreach ($all_orders as $order) {
             $picking_status = $order->get_meta('picking_status');
             $user_claimed = $order->get_meta('user_claimed');
             
-            // Skip completed orders
+            // Skip completed orders - they go to a separate view
             if ($picking_status === 'completed') {
                 continue;
             }
             
-            // Check if order is available for this user
-            if (!empty($user_claimed) && $user_claimed !== $appuser) {
+            // Include orders that are:
+            // 1. Not claimed by anyone (pending)
+            // 2. Claimed by this user (in process)
+            // 3. In picking status (show to all users so they can see what's being worked on)
+            if (!empty($user_claimed) && $user_claimed !== $appuser && $picking_status !== 'picking') {
                 continue;
             }
             
             $orders[] = $order;
-            
-            // Stop when we have enough orders
-            if (count($orders) >= $batch_size) {
-                break;
-            }
         }
         
         $picking_list = array();
@@ -1860,37 +1860,49 @@ class Picking_API {
             return $this->unauthorized_response();
         }
         
+        // Get filter parameter (day, week, month)
+        $filter = $request->get_param('filter') ?: 'day';
+        
         $order_status = get_option('picking_order_status', array('wc-processing'));
         if (!is_array($order_status)) {
             $order_status = array($order_status);
         }
         
-        // Get pending orders count
-        $pending_orders = wc_get_orders(array(
+        // Get pending orders count (not yet started)
+        $all_processing_orders = wc_get_orders(array(
             'status' => $order_status,
             'limit' => -1,
-            'return' => 'ids',
         ));
         
-        // Get orders in picking
-        $picking_orders = wc_get_orders(array(
-            'status' => $order_status,
-            'limit' => -1,
-            'return' => 'ids',
-            'meta_query' => array(
-                array(
-                    'key' => 'picking_status',
-                    'value' => 'picking',
-                    'compare' => '='
-                )
-            )
-        ));
+        $pending_count = 0;
+        $picking_count = 0;
+        foreach ($all_processing_orders as $order) {
+            $picking_status = $order->get_meta('picking_status');
+            if ($picking_status === 'picking' || $picking_status === 'packing') {
+                $picking_count++;
+            } elseif ($picking_status !== 'completed') {
+                $pending_count++;
+            }
+        }
         
-        // Get completed today via picking app (using picking_completed_at meta)
-        $today_start = date('Y-m-d 00:00:00');
+        // Calculate date range based on filter
+        $now = current_time('timestamp');
+        switch ($filter) {
+            case 'week':
+                $start_date = date('Y-m-d 00:00:00', strtotime('monday this week', $now));
+                break;
+            case 'month':
+                $start_date = date('Y-m-01 00:00:00', $now);
+                break;
+            case 'day':
+            default:
+                $start_date = date('Y-m-d 00:00:00', $now);
+                break;
+        }
+        
+        // Get all completed orders via picking app
         $all_completed_orders = wc_get_orders(array(
             'limit' => -1,
-            'return' => 'ids',
             'meta_query' => array(
                 array(
                     'key' => 'picking_status',
@@ -1900,17 +1912,30 @@ class Picking_API {
             )
         ));
         
-        // Filter to only orders completed today
-        $completed_today = array();
-        foreach ($all_completed_orders as $order_id) {
-            $order = wc_get_order($order_id);
-            if ($order) {
-                $completed_at = $order->get_meta('picking_completed_at');
-                if ($completed_at && strtotime($completed_at) >= strtotime($today_start)) {
-                    $completed_today[] = $order_id;
-                }
+        // Filter completed orders by date range and build list
+        $completed_orders_list = array();
+        $completed_count = 0;
+        foreach ($all_completed_orders as $order) {
+            $completed_at = $order->get_meta('picking_completed_at');
+            if ($completed_at && strtotime($completed_at) >= strtotime($start_date)) {
+                $completed_count++;
+                $completed_orders_list[] = array(
+                    'order_id' => $order->get_id(),
+                    'order_number' => $order->get_order_number(),
+                    'customer_name' => $order->get_formatted_billing_full_name(),
+                    'total' => $order->get_total(),
+                    'date_created' => $order->get_date_created()->format('Y-m-d H:i:s'),
+                    'completed_at' => $completed_at,
+                    'payment_method' => $order->get_payment_method_title(),
+                    'completed_by' => $order->get_meta('picking_completed_by') ?: $order->get_meta('user_claimed'),
+                );
             }
         }
+        
+        // Sort completed orders by completion date (most recent first)
+        usort($completed_orders_list, function($a, $b) {
+            return strtotime($b['completed_at']) - strtotime($a['completed_at']);
+        });
         
         // Get picker activity
         $users = get_option('picking_registered_users', array());
@@ -1928,11 +1953,13 @@ class Picking_API {
         return array(
             'success' => true,
             'stats' => array(
-                'pending_orders' => count($pending_orders),
-                'picking_orders' => count($picking_orders),
-                'completed_today' => count($completed_today),
+                'pending_orders' => $pending_count,
+                'picking_orders' => $picking_count,
+                'completed_count' => $completed_count,
                 'total_users' => count($users),
             ),
+            'completed_orders' => $completed_orders_list,
+            'filter' => $filter,
             'pickers' => $picker_stats,
         );
     }

@@ -15,7 +15,7 @@ import {
 } from '@mui/material'
 import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { ArrowBack, PlayArrow, Person, AttachMoney } from '@mui/icons-material'
+import { ArrowBack, PlayArrow, Person, AttachMoney, CalendarToday, AccessTime, Payment } from '@mui/icons-material'
 
 interface LineItem {
   id: number
@@ -38,6 +38,8 @@ interface Order {
   availabilityReasonText: string
   total: string
   customer_name: string
+  date_created: string
+  payment_method: string
   line_items: LineItem[]
 }
 
@@ -80,6 +82,8 @@ function OrderDetail() {
         availabilityReasonText: data.availability_reason_text || '',
         total: data.total || '0',
         customer_name: data.customer?.name || 'Cliente',
+        date_created: data.date_created || '',
+        payment_method: data.payment_method || '',
         line_items: (data.products || []).map((p: any) => ({
           id: p.item_id || p.product_id,
           name: p.name,
@@ -177,10 +181,28 @@ function OrderDetail() {
                   {order.customer_name}
                 </Typography>
               </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                <CalendarToday sx={{ fontSize: 18, mr: 1, color: 'text.secondary' }} />
+                <Typography variant="body1" color="text.secondary">
+                  {order.date_created ? new Date(order.date_created).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                <AccessTime sx={{ fontSize: 18, mr: 1, color: 'text.secondary' }} />
+                <Typography variant="body1" color="text.secondary">
+                  {order.date_created ? new Date(order.date_created).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : '-'}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                <Payment sx={{ fontSize: 18, mr: 1, color: 'text.secondary' }} />
+                <Typography variant="body1" color="text.secondary">
+                  {order.payment_method || 'No especificado'}
+                </Typography>
+              </Box>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <AttachMoney sx={{ fontSize: 20, mr: 1, color: 'text.secondary' }} />
                 <Typography variant="h6">
-                  €{order.total}
+                  ${order.total}
                 </Typography>
               </Box>
             </Box>

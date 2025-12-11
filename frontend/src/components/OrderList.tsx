@@ -28,6 +28,7 @@ import {
   ClearAll,
   CalendarToday,
   Payment,
+  AccessTime,
 } from '@mui/icons-material'
 
 interface Order {
@@ -86,10 +87,12 @@ function OrderList() {
     }
   }
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'processing':
+  const getPickingStatusColor = (pickingStatus: string) => {
+    switch (pickingStatus) {
+      case 'picking':
         return 'warning'
+      case 'packing':
+        return 'info'
       case 'completed':
         return 'success'
       default:
@@ -97,14 +100,16 @@ function OrderList() {
     }
   }
 
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'processing':
-        return 'Procesando'
+  const getPickingStatusText = (pickingStatus: string) => {
+    switch (pickingStatus) {
+      case 'picking':
+        return 'En Picking'
+      case 'packing':
+        return 'Empacando'
       case 'completed':
         return 'Completado'
       default:
-        return status
+        return 'Pendiente'
     }
   }
 
@@ -195,8 +200,8 @@ function OrderList() {
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h5" component="h1" sx={{ fontWeight: 600 }}>
-          Pedidos Pendientes
+        <Typography variant="h5" component="h1" sx={{ fontWeight: 600, fontSize: { xs: '1.1rem', sm: '1.5rem' } }}>
+          Pedidos Pendientes y En Proceso
         </Typography>
         <ToggleButtonGroup
           value={pickingMode}
@@ -296,6 +301,12 @@ function OrderList() {
                           </Typography>
                         </Box>
                         <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
+                          <AccessTime sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
+                          <Typography variant="body2" color="text.secondary">
+                            Hora: {new Date(order.date_created).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
                           <Payment sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
                           <Typography variant="body2" color="text.secondary">
                             Pago: {order.payment_method || 'No especificado'}
@@ -304,8 +315,8 @@ function OrderList() {
                       </Box>
                     </Box>
                     <Chip
-                      label={getStatusText(order.status)}
-                      color={getStatusColor(order.status) as 'warning' | 'success' | 'default'}
+                      label={getPickingStatusText(order.picking_status)}
+                      color={getPickingStatusColor(order.picking_status) as 'warning' | 'success' | 'default' | 'info'}
                       size="small"
                     />
                   </Box>
