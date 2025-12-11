@@ -94,6 +94,7 @@ interface Photo {
   url: string
   filename: string
   uploaded_at: string
+  type?: string
 }
 
 interface ExtraItem {
@@ -619,21 +620,37 @@ function OrderManagement() {
             </Box>
           ) : orderPhotos.length > 0 ? (
             <ImageList cols={2} gap={16}>
-              {orderPhotos.map((photo, index) => (
-                <ImageListItem key={index}>
-                  <img
-                    src={photo.url}
-                    alt={photo.filename || `Foto ${index + 1}`}
-                    loading="lazy"
-                    style={{ borderRadius: 8 }}
-                  />
-                  <Box sx={{ p: 1, bgcolor: 'background.paper' }}>
-                    <Typography variant="caption" color="text.secondary">
-                      {photo.uploaded_at || 'Fecha desconocida'}
-                    </Typography>
-                  </Box>
-                </ImageListItem>
-              ))}
+              {orderPhotos.map((photo, index) => {
+                const isVideo = photo.url && (
+                  photo.url.toLowerCase().includes('.webm') || 
+                  photo.url.toLowerCase().includes('.mp4') || 
+                  photo.url.toLowerCase().includes('.mov') ||
+                  photo.type === 'video'
+                )
+                return (
+                  <ImageListItem key={index}>
+                    {isVideo ? (
+                      <video
+                        src={photo.url}
+                        controls
+                        style={{ borderRadius: 8, width: '100%', maxHeight: 300 }}
+                      />
+                    ) : (
+                      <img
+                        src={photo.url}
+                        alt={photo.filename || `Foto ${index + 1}`}
+                        loading="lazy"
+                        style={{ borderRadius: 8 }}
+                      />
+                    )}
+                    <Box sx={{ p: 1, bgcolor: 'background.paper' }}>
+                      <Typography variant="caption" color="text.secondary">
+                        {photo.uploaded_at || 'Fecha desconocida'}
+                      </Typography>
+                    </Box>
+                  </ImageListItem>
+                )
+              })}
             </ImageList>
           ) : (
             <Alert severity="info">No hay fotos para este pedido</Alert>
