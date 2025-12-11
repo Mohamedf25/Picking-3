@@ -28,6 +28,7 @@ import {
   ClearAll,
   CalendarToday,
   Payment,
+  Engineering,
 } from '@mui/icons-material'
 
 interface Order {
@@ -301,13 +302,31 @@ function OrderList() {
                             Pago: {order.payment_method || 'No especificado'}
                           </Typography>
                         </Box>
+                        {order.user_claimed && (
+                          <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
+                            <Engineering sx={{ fontSize: 16, mr: 1, color: 'warning.main' }} />
+                            <Typography variant="body2" color="warning.main" sx={{ fontWeight: 500 }}>
+                              En picking: {order.user_claimed}
+                            </Typography>
+                          </Box>
+                        )}
                       </Box>
                     </Box>
-                    <Chip
-                      label={getStatusText(order.status)}
-                      color={getStatusColor(order.status) as 'warning' | 'success' | 'default'}
-                      size="small"
-                    />
+                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.5 }}>
+                      <Chip
+                        label={getStatusText(order.status)}
+                        color={getStatusColor(order.status) as 'warning' | 'success' | 'default'}
+                        size="small"
+                      />
+                      {order.picking_status === 'picking' && (
+                        <Chip
+                          label="En Proceso"
+                          color="info"
+                          size="small"
+                          variant="outlined"
+                        />
+                      )}
+                    </Box>
                   </Box>
 
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>

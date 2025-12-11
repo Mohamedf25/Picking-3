@@ -130,9 +130,23 @@ function PickingSession() {
   // User tracking state
   const [pickingStartedBy, setPickingStartedBy] = useState('')
   const [pickingUsers, setPickingUsers] = useState<string[]>([])
+  const [_pickingHistory, setPickingHistory] = useState<any[]>([])
   
   // Quantity modification state
   const [updatingQty, setUpdatingQty] = useState<string | number | null>(null)
+  
+  // Exit picking modal state
+  const [exitDialog, setExitDialog] = useState(false)
+  const exitReasons = [
+    { id: 'falta_mercancia', label: 'Falta de mercancía' },
+    { id: 'pedido_incompleto', label: 'Pedido incompleto' },
+    { id: 'cliente_no_confirma', label: 'Cliente no confirma' },
+    { id: 'error_sku', label: 'Error en el SKU' },
+    { id: 'otro', label: 'Otro' },
+  ]
+  const [selectedExitReason, setSelectedExitReason] = useState('')
+  const [customExitReason, setCustomExitReason] = useState('')
+  const [exiting, setExiting] = useState(false)
 
   // Get store config from localStorage
   const storeUrl = localStorage.getItem('store_url') || ''
@@ -209,6 +223,7 @@ function PickingSession() {
       // Set user tracking info
       setPickingStartedBy(data.picking_started_by || data.user_claimed || '')
       setPickingUsers(data.picking_users || [])
+      setPickingHistory(data.picking_history || [])
       
       // Calculate progress
       const totalExpected = lines.reduce((sum: number, line: ProductLine) => sum + line.quantity, 0)
@@ -631,6 +646,49 @@ function PickingSession() {
     setVideoPlayerOpen(true)
   }
 
+  const handleExitPicking = async () => {
+    if (!selectedExitReason) {
+      showError('Motivo Requerido', 'Por favor seleccione un motivo para salir del picking.')
+      return
+    }
+
+    setExiting(true)
+    setError('')
+
+    try {
+      await axios.post(`${storeUrl}/wp-json/picking/v1/exit-picking`, {
+        order_id: currentOrderId,
+        appuser: pickerName,
+        reason_id: selectedExitReason,
+        reason_text: selectedExitReason === 'otro' ? customExitReason : '',
+      }, {
+        params: { token: apiKey }
+      })
+
+      showSuccess('Sesion Finalizada', 'El pedido queda disponible para otros usuarios.')
+      setExitDialog(false)
+      setSelectedExitReason('')
+      setCustomExitReason('')
+      navigate('/orders')
+    } catch (err: any) {
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
+          localStorage.removeItem('user_logged_in')
+          localStorage.removeItem('picking_user')
+          window.location.href = '/'
+        })
+      } else {
+        showError('Error', err.response?.data?.message || 'Error al salir del picking')
+      }
+    } finally {
+      setExiting(false)
+    }
+  }
+
+  const handleBackClick = () => {
+    setExitDialog(true)
+  }
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
@@ -650,13 +708,13 @@ function PickingSession() {
       }}>
         <Button
           startIcon={<ArrowBack />}
-          onClick={() => navigate('/orders')}
+          onClick={handleBackClick}
           sx={{ 
             mr: { xs: 0, sm: 2 },
             alignSelf: { xs: 'flex-start', sm: 'center' }
           }}
         >
-          Volver
+          Salir
         </Button>
         <Typography 
           variant="h4" 
@@ -1451,6 +1509,73 @@ function PickingSession() {
             startIcon={addingProduct ? <CircularProgress size={20} /> : <Add />}
           >
             {addingProduct ? 'Agregando...' : 'Agregar Producto'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Exit Picking Dialog */}
+      <Dialog 
+        open={exitDialog} 
+        onClose={() => !exiting && setExitDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Salir del Picking</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Por favor, seleccione el motivo por el cual desea salir del picking.
+            El pedido quedara disponible para que otro usuario pueda continuar.
+          </Typography>
+          
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {exitReasons.map((reason) => (
+              <Button
+                key={reason.id}
+                variant={selectedExitReason === reason.id ? 'contained' : 'outlined'}
+                onClick={() => setSelectedExitReason(reason.id)}
+                sx={{ 
+                  justifyContent: 'flex-start',
+                  py: 1.5,
+                  textTransform: 'none',
+                }}
+              >
+                {reason.label}
+              </Button>
+            ))}
+          </Box>
+          
+          {selectedExitReason === 'otro' && (
+            <TextField
+              fullWidth
+              label="Especifique el motivo"
+              value={customExitReason}
+              onChange={(e) => setCustomExitReason(e.target.value)}
+              multiline
+              rows={2}
+              sx={{ mt: 2 }}
+              placeholder="Escriba el motivo..."
+            />
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => {
+              setExitDialog(false)
+              setSelectedExitReason('')
+              setCustomExitReason('')
+            }}
+            disabled={exiting}
+          >
+            Cancelar
+          </Button>
+          <Button
+            onClick={handleExitPicking}
+            variant="contained"
+            color="warning"
+            disabled={!selectedExitReason || (selectedExitReason === 'otro' && !customExitReason.trim()) || exiting}
+            startIcon={exiting ? <CircularProgress size={20} /> : <ArrowBack />}
+          >
+            {exiting ? 'Saliendo...' : 'Confirmar Salida'}
           </Button>
         </DialogActions>
       </Dialog>

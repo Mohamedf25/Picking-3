@@ -257,6 +257,24 @@ class Picking_API {
             'callback' => array($this, 'get_audit_orders'),
             'permission_callback' => '__return_true',
         ));
+        
+        register_rest_route($namespace, '/exit-picking', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'exit_picking'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/get-picking-history', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_picking_history'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route($namespace, '/get-exit-reasons', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_exit_reasons'),
+            'permission_callback' => '__return_true',
+        ));
     }
     
     public function debug_auth($request) {
@@ -564,6 +582,60 @@ class Picking_API {
         return $event;
     }
     
+    /**
+     * Record a picking history event for tracking who worked on an order.
+     * This is separate from audit_log and specifically tracks entry/exit events.
+     * 
+     * @param WC_Order $order The WooCommerce order object
+     * @param string $action Type of action: 'entered', 'exited', 'continued', 'completed'
+     * @param string $appuser The username who performed the action
+     * @param string $reason Optional reason (for exit actions)
+     * @param array $details Additional event details
+     */
+    private function record_picking_history($order, $action, $appuser, $reason = '', $details = array()) {
+        $history = $order->get_meta('picking_history');
+        if (!is_array($history)) {
+            $history = array();
+        }
+        
+        $event = array(
+            'event_id' => 'hist_' . time() . '_' . wp_rand(1000, 9999),
+            'action' => $action,
+            'user' => $appuser,
+            'reason' => $reason,
+            'timestamp' => current_time('mysql'),
+            'timestamp_unix' => time(),
+            'details' => $details,
+        );
+        
+        $history[] = $event;
+        $order->update_meta_data('picking_history', $history);
+        $order->save();
+        
+        // Also record in audit log for complete audit trail
+        $this->record_audit_event($order, 'picking_' . $action, $appuser, array_merge(
+            array('reason' => $reason),
+            $details
+        ));
+        
+        return $event;
+    }
+    
+    /**
+     * Get predefined exit reasons for picking.
+     * 
+     * @return array List of predefined exit reasons
+     */
+    private function get_predefined_exit_reasons() {
+        return array(
+            array('id' => 'falta_mercancia', 'label' => 'Falta de mercancía'),
+            array('id' => 'pedido_incompleto', 'label' => 'Pedido incompleto'),
+            array('id' => 'cliente_no_confirma', 'label' => 'Cliente no confirma'),
+            array('id' => 'error_sku', 'label' => 'Error en el SKU'),
+            array('id' => 'otro', 'label' => 'Otro'),
+        );
+    }
+    
     public function get_settings($request) {
         if (!$this->validate_token($request)) {
             return $this->unauthorized_response();
@@ -685,27 +757,58 @@ class Picking_API {
         }
         
         $user_claimed = $order->get_meta('user_claimed');
+        $picking_status = $order->get_meta('picking_status');
+        
+        // Check if order is claimed by another user who is still actively working
+        // Allow same user to re-enter, and allow others if order was released (no user_claimed)
         if (!empty($user_claimed) && $user_claimed !== $appuser) {
             return new WP_Error('order_claimed', sprintf(__('Pedido reclamado por %s.', 'picking-connector'), $user_claimed), array('status' => 403));
         }
         
-        if (!empty($appuser) && empty($user_claimed)) {
-            $order->update_meta_data('user_claimed', $appuser);
-            $order->update_meta_data('picking_status', 'picking');
-            $order->update_meta_data('picking_started_at', current_time('mysql'));
-            $order->update_meta_data('picking_started_by', $appuser);
-            
-            // Change WooCommerce order status if configured
-            $started_status = get_option('picking_started_status', '');
-            if (!empty($started_status)) {
-                $order->set_status(str_replace('wc-', '', $started_status), __('Picking iniciado por ', 'picking-connector') . $appuser);
+        // Determine if this is a new entry, re-entry by same user, or continuation by another user
+        $is_new_entry = empty($user_claimed);
+        $is_reentry = !empty($user_claimed) && $user_claimed === $appuser;
+        $is_continuation = !empty($picking_status) && $picking_status === 'picking' && $is_new_entry;
+        
+        if (!empty($appuser)) {
+            if ($is_new_entry) {
+                // First time claiming this order or continuing after previous user exited
+                $order->update_meta_data('user_claimed', $appuser);
+                $order->update_meta_data('picking_status', 'picking');
+                $order->update_meta_data('picking_started_at', current_time('mysql'));
+                
+                // Only set picking_started_by if this is truly the first time
+                $original_starter = $order->get_meta('picking_started_by');
+                if (empty($original_starter)) {
+                    $order->update_meta_data('picking_started_by', $appuser);
+                }
+                
+                // Change WooCommerce order status if configured
+                $started_status = get_option('picking_started_status', '');
+                if (!empty($started_status)) {
+                    $order->set_status(str_replace('wc-', '', $started_status), __('Picking iniciado por ', 'picking-connector') . $appuser);
+                }
+                
+                $order->save();
+                
+                // Record history event
+                if ($is_continuation) {
+                    $this->record_picking_history($order, 'continued', $appuser, '', array(
+                        'previous_status' => $picking_status,
+                    ));
+                } else {
+                    $this->record_picking_history($order, 'entered', $appuser);
+                }
+            } else if ($is_reentry) {
+                // Same user re-entering - just update the claim time
+                $order->update_meta_data('user_claimed', $appuser);
+                $order->save();
+                
+                // Record re-entry in history
+                $this->record_picking_history($order, 'reentered', $appuser);
             }
             
-            $order->save();
-        }
-        
-        // Record this user as having worked on the order
-        if (!empty($appuser)) {
+            // Record this user as having worked on the order
             $this->record_picking_user($order, $appuser);
         }
         
@@ -812,6 +915,12 @@ class Picking_API {
             $picking_users = array();
         }
         
+        // Get picking history
+        $picking_history = $order->get_meta('picking_history');
+        if (!is_array($picking_history)) {
+            $picking_history = array();
+        }
+        
         return array(
             'order_id' => $order->get_id(),
             'order_number' => $order->get_order_number(),
@@ -820,6 +929,7 @@ class Picking_API {
             'user_claimed' => $order->get_meta('user_claimed'),
             'picking_started_by' => $picking_started_by,
             'picking_users' => $picking_users,
+            'picking_history' => $picking_history,
             'picking_started_at' => $order->get_meta('picking_started_at'),
             'available_for_picking' => $availability['available'],
             'availability_reason' => $availability['reason'],
@@ -3481,5 +3591,148 @@ class Picking_API {
         }
         
         return 'picker'; // Default role
+    }
+    
+    /**
+     * Exit picking session with reason.
+     * Releases the order so another user can continue.
+     */
+    public function exit_picking($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? $data['order_id'] : $request->get_param('order_id');
+        $appuser = isset($data['appuser']) ? $data['appuser'] : $request->get_param('appuser');
+        $reason_id = isset($data['reason_id']) ? sanitize_text_field($data['reason_id']) : '';
+        $reason_text = isset($data['reason_text']) ? sanitize_text_field($data['reason_text']) : '';
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        if (empty($reason_id)) {
+            return new WP_Error('missing_reason', __('Motivo de salida requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        // Get the reason label from predefined reasons
+        $reason_label = $reason_text;
+        if (empty($reason_label)) {
+            $predefined_reasons = $this->get_predefined_exit_reasons();
+            foreach ($predefined_reasons as $reason) {
+                if ($reason['id'] === $reason_id) {
+                    $reason_label = $reason['label'];
+                    break;
+                }
+            }
+        }
+        
+        // If reason_id is 'otro' and reason_text is provided, use the custom text
+        if ($reason_id === 'otro' && !empty($reason_text)) {
+            $reason_label = $reason_text;
+        }
+        
+        // Record exit in picking history
+        $this->record_picking_history($order, 'exited', $appuser, $reason_label, array(
+            'reason_id' => $reason_id,
+            'reason_text' => $reason_text,
+        ));
+        
+        // Release the order claim so others can continue
+        // Keep picking_status as 'picking' so the order remains in progress
+        // Only clear user_claimed to allow another user to take over
+        $order->delete_meta_data('user_claimed');
+        $order->save();
+        
+        // Add order note
+        $order->add_order_note(sprintf(
+            __('Usuario %s salió del picking. Motivo: %s', 'picking-connector'),
+            $appuser,
+            $reason_label
+        ));
+        
+        return array(
+            'success' => true,
+            'message' => __('Sesión de picking finalizada. El pedido está disponible para otros usuarios.', 'picking-connector'),
+            'order_id' => $order_id,
+            'reason' => $reason_label,
+        );
+    }
+    
+    /**
+     * Get picking history for an order.
+     * Returns all entry/exit events with timestamps and users.
+     */
+    public function get_picking_history($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $order_id = $request->get_param('order_id');
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        $history = $order->get_meta('picking_history');
+        if (!is_array($history)) {
+            $history = array();
+        }
+        
+        // Get additional info
+        $picking_users = $order->get_meta('picking_users');
+        if (!is_array($picking_users)) {
+            $picking_users = array();
+        }
+        
+        $picking_started_by = $order->get_meta('picking_started_by');
+        $user_claimed = $order->get_meta('user_claimed');
+        $picking_status = $order->get_meta('picking_status');
+        
+        return array(
+            'success' => true,
+            'order_id' => $order_id,
+            'history' => $history,
+            'picking_users' => $picking_users,
+            'picking_started_by' => $picking_started_by,
+            'current_user' => $user_claimed,
+            'picking_status' => $picking_status ?: 'pending',
+        );
+    }
+    
+    /**
+     * Get predefined exit reasons.
+     * Returns the list of reasons a user can select when exiting picking.
+     */
+    public function get_exit_reasons($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        return array(
+            'success' => true,
+            'reasons' => $this->get_predefined_exit_reasons(),
+        );
     }
 }
