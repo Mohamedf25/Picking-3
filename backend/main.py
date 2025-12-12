@@ -304,10 +304,27 @@ async def start_picking_session(order_id: int, current_user: User = Depends(get_
     
     for item in order["line_items"]:
         product_details = get_woocommerce_product_details(item["product_id"])
+        sku = item.get("sku") or ""
+        ean = ""
+        gtin = ""
+        upc = ""
+        product_name = item.get("name") or ""
+        
+        if product_details:
+            ean = product_details.get("ean") or product_details.get("_ean") or product_details.get("_alg_ean") or ""
+            gtin = product_details.get("gtin") or product_details.get("_gtin") or ""
+            upc = product_details.get("upc") or product_details.get("_upc") or ""
+            if not product_name:
+                product_name = product_details.get("name") or ""
+        
         line = Line(
             session_id=session.id,
             product_id=item["product_id"],
-            ean=item["sku"] or "",
+            sku=sku,
+            ean=ean,
+            gtin=gtin,
+            upc=upc,
+            product_name=product_name,
             expected_qty=item["quantity"],
             picked_qty=0,
             status="pending"
@@ -334,12 +351,56 @@ async def register_scan(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    line = db.query(Line).filter(
-        Line.session_id == session_id,
-        Line.ean == scan_request.ean
-    ).first()
+    scanned_code = scan_request.code.strip()
+    
+    line = None
+    matched_field = None
+    
+    if scanned_code:
+        line = db.query(Line).filter(
+            Line.session_id == session_id,
+            Line.ean == scanned_code
+        ).first()
+        if line:
+            matched_field = "ean"
+    
+    if not line and scanned_code:
+        line = db.query(Line).filter(
+            Line.session_id == session_id,
+            Line.gtin == scanned_code
+        ).first()
+        if line:
+            matched_field = "gtin"
+    
+    if not line and scanned_code:
+        line = db.query(Line).filter(
+            Line.session_id == session_id,
+            Line.upc == scanned_code
+        ).first()
+        if line:
+            matched_field = "upc"
+    
+    if not line and scanned_code:
+        line = db.query(Line).filter(
+            Line.session_id == session_id,
+            Line.sku == scanned_code
+        ).first()
+        if line:
+            matched_field = "sku"
     
     if not line:
+        scan_event = Event(
+            session_id=session_id,
+            user_id=current_user.id,
+            type="scan_invalid",
+            payload={
+                "code": scanned_code,
+                "result": "invalid",
+                "reason": "Product not found in this order"
+            }
+        )
+        db.add(scan_event)
+        db.commit()
         raise HTTPException(status_code=404, detail="Product not found in this order")
     
     if line.picked_qty < line.expected_qty:
@@ -355,12 +416,29 @@ async def register_scan(
             session_id=session_id,
             user_id=current_user.id,
             type="scan",
-            payload={"ean": scan_request.ean, "picked_qty": line.picked_qty}
+            payload={
+                "code": scanned_code,
+                "matched_field": matched_field,
+                "ean": line.ean,
+                "gtin": line.gtin,
+                "upc": line.upc,
+                "sku": line.sku,
+                "product_name": line.product_name,
+                "picked_qty": line.picked_qty,
+                "expected_qty": line.expected_qty,
+                "result": "valid"
+            }
         )
         db.add(event)
         db.commit()
     
-    return {"message": "Scan registered", "picked_qty": line.picked_qty, "expected_qty": line.expected_qty}
+    return {
+        "message": "Scan registered",
+        "picked_qty": line.picked_qty,
+        "expected_qty": line.expected_qty,
+        "matched_field": matched_field,
+        "product_name": line.product_name
+    }
 
 @app.post("/sessions/{session_id}/photo", response_model=PhotoResponse)
 async def upload_photo(
@@ -1031,10 +1109,27 @@ async def start_picking_session_api(order_id: int, current_user: User = Depends(
     
     for item in order["line_items"]:
         product_details = get_woocommerce_product_details(item["product_id"])
+        sku = item.get("sku") or ""
+        ean = ""
+        gtin = ""
+        upc = ""
+        product_name = item.get("name") or ""
+        
+        if product_details:
+            ean = product_details.get("ean") or product_details.get("_ean") or product_details.get("_alg_ean") or ""
+            gtin = product_details.get("gtin") or product_details.get("_gtin") or ""
+            upc = product_details.get("upc") or product_details.get("_upc") or ""
+            if not product_name:
+                product_name = product_details.get("name") or ""
+        
         line = Line(
             session_id=session.id,
             product_id=item["product_id"],
-            ean=item["sku"] or "",
+            sku=sku,
+            ean=ean,
+            gtin=gtin,
+            upc=upc,
+            product_name=product_name,
             expected_qty=item["quantity"],
             picked_qty=0,
             status="pending"
