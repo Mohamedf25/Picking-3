@@ -360,8 +360,7 @@ function PickingSession() {
     const previousLines = [...productLines]
     const previousProgress = progress
 
-    // Optimistic UI update - update quantity/progress immediately without waiting for API
-    // But don't show success message until API confirms
+    // Optimistic UI update - update immediately without waiting for API
     if (matchingLine) {
       const updatedLines = productLines.map(line => {
         if (line.item_id === matchingLine.item_id) {
@@ -379,7 +378,8 @@ function PickingSession() {
       const totalPicked = updatedLines.reduce((sum, line) => sum + line.picked_qty, 0)
       setProgress(totalExpected > 0 ? (totalPicked / totalExpected) * 100 : 0)
       
-      // Clear scan input immediately for fast UX
+      // Show success immediately
+      showSuccess('Producto Escaneado', `Codigo: ${eanToScan}`)
       setScanValue('')
     }
 
@@ -388,7 +388,7 @@ function PickingSession() {
     setError('')
     setSuccess('')
 
-    // Make API call - show success only after API confirms
+    // Make API call in background (async)
     try {
       await axios.post(`${storeUrl}/wp-json/picking/v1/scan-product`, {
         order_id: currentOrderId,
@@ -397,13 +397,11 @@ function PickingSession() {
       }, {
         params: { token: apiKey }
       })
-      
-      // API confirmed success - now show success message and play sound
       playSuccessSound()
-      showSuccess('Producto Escaneado', `Codigo: ${eanToScan}`)
       
       // If no matching line was found locally but API succeeded, refresh to get updated data
       if (!matchingLine) {
+        showSuccess('Producto Escaneado', `Codigo: ${eanToScan}`)
         setScanValue('')
         await fetchOrderProducts()
       }
