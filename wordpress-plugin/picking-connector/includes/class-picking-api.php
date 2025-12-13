@@ -275,6 +275,12 @@ class Picking_API {
             'callback' => array($this, 'get_exit_reasons'),
             'permission_callback' => '__return_true',
         ));
+        
+        register_rest_route($namespace, '/order-statuses', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_order_statuses'),
+            'permission_callback' => '__return_true',
+        ));
     }
     
     public function debug_auth($request) {
@@ -1105,6 +1111,18 @@ class Picking_API {
                 );
             }
             
+            $picking_history = $order->get_meta('picking_history');
+            $last_picking_event = null;
+            if (is_array($picking_history) && !empty($picking_history)) {
+                $last_event = end($picking_history);
+                $last_picking_event = array(
+                    'action' => $last_event['action'] ?? '',
+                    'user' => $last_event['user'] ?? '',
+                    'timestamp' => $last_event['timestamp'] ?? '',
+                    'reason' => $last_event['reason'] ?? '',
+                );
+            }
+            
             $picking_list[] = array(
                 'order_id' => $order->get_id(),
                 'order_number' => $order->get_order_number(),
@@ -1116,6 +1134,7 @@ class Picking_API {
                 'total' => $order->get_total(),
                 'item_count' => $order->get_item_count(),
                 'payment_method' => $order->get_payment_method_title(),
+                'last_picking_event' => $last_picking_event,
             );
         }
         
@@ -2721,6 +2740,7 @@ class Picking_API {
         
         $status = $request->get_param('status');
         $picking_status = $request->get_param('picking_status');
+        $search = $request->get_param('search');
         $date_from = $request->get_param('date_from');
         $date_to = $request->get_param('date_to');
         $page = $request->get_param('page') ?: 1;
@@ -2760,6 +2780,17 @@ class Picking_API {
             $orders = array_filter($orders, function($order) use ($picking_status) {
                 $order_picking_status = $order->get_meta('picking_status') ?: 'pending';
                 return $order_picking_status === $picking_status;
+            });
+        }
+        
+        // Filter by search query (order number or customer name)
+        if (!empty($search)) {
+            $search_lower = strtolower($search);
+            $orders = array_filter($orders, function($order) use ($search_lower) {
+                $order_number = strtolower($order->get_order_number());
+                $customer_name = strtolower($order->get_formatted_billing_full_name());
+                return strpos($order_number, $search_lower) !== false || 
+                       strpos($customer_name, $search_lower) !== false;
             });
         }
         
@@ -3733,6 +3764,31 @@ class Picking_API {
         return array(
             'success' => true,
             'reasons' => $this->get_predefined_exit_reasons(),
+        );
+    }
+    
+    /**
+     * Get all available WooCommerce order statuses.
+     * Returns all statuses including custom ones for filter dropdowns.
+     */
+    public function get_order_statuses($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        $statuses = wc_get_order_statuses();
+        $result = array();
+        
+        foreach ($statuses as $slug => $label) {
+            $result[] = array(
+                'value' => $slug,
+                'label' => $label,
+            );
+        }
+        
+        return array(
+            'success' => true,
+            'statuses' => $result,
         );
     }
 }
