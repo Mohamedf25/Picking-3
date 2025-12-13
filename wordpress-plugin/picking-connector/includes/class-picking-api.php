@@ -498,6 +498,8 @@ class Picking_API {
     /**
      * Get all barcode fields for a product (EAN, IAN, CND, GTIN).
      * Searches multiple meta keys used by different barcode plugins.
+     * Uses get_post_meta() directly for better compatibility with third-party plugins.
+     * Checks variation first, then parent product if variation meta is empty.
      * 
      * @param WC_Product $product The WooCommerce product object
      * @return array Array with 'ean', 'ian', 'cnd', 'gtin' keys
@@ -510,25 +512,31 @@ class Picking_API {
             'gtin' => '',
         );
         
-        // EAN meta keys (European Article Number)
-        $ean_meta_keys = array('_alg_ean', '_ean', 'ean', '_barcode', 'barcode');
-        foreach ($ean_meta_keys as $meta_key) {
-            $value = $product->get_meta($meta_key);
-            if (!empty($value)) {
-                $barcodes['ean'] = $value;
-                break;
-            }
+        // Get product ID and parent ID for variations
+        $product_id = $product->get_id();
+        $parent_id = 0;
+        if ($product->is_type('variation')) {
+            $parent_id = $product->get_parent_id();
         }
+        
+        // EAN meta keys (European Article Number) - expanded list for better plugin compatibility
+        $ean_meta_keys = array(
+            '_alg_ean',
+            '_ean', 
+            'ean',
+            '_wpm_gtin_code',
+            '_global_unique_id',
+            '_barcode', 
+            'barcode',
+            '_wpla_ean',
+            '_sku_ean',
+        );
+        $barcodes['ean'] = $this->get_meta_from_product_or_parent($product_id, $parent_id, $ean_meta_keys);
         
         // IAN meta keys (International Article Number - same as EAN but different naming)
         $ian_meta_keys = array('_ian', 'ian', '_alg_ian');
-        foreach ($ian_meta_keys as $meta_key) {
-            $value = $product->get_meta($meta_key);
-            if (!empty($value)) {
-                $barcodes['ian'] = $value;
-                break;
-            }
-        }
+        $barcodes['ian'] = $this->get_meta_from_product_or_parent($product_id, $parent_id, $ian_meta_keys);
+        
         // If IAN is empty but EAN exists, use EAN as IAN (they're often the same)
         if (empty($barcodes['ian']) && !empty($barcodes['ean'])) {
             $barcodes['ian'] = $barcodes['ean'];
@@ -536,25 +544,45 @@ class Picking_API {
         
         // CND meta keys (Codigo Nacional de Drogas - pharmaceutical code)
         $cnd_meta_keys = array('_cnd', 'cnd', '_codigo_nacional', 'codigo_nacional', '_cn', 'cn');
-        foreach ($cnd_meta_keys as $meta_key) {
-            $value = $product->get_meta($meta_key);
-            if (!empty($value)) {
-                $barcodes['cnd'] = $value;
-                break;
-            }
-        }
+        $barcodes['cnd'] = $this->get_meta_from_product_or_parent($product_id, $parent_id, $cnd_meta_keys);
         
         // GTIN meta keys (Global Trade Item Number)
-        $gtin_meta_keys = array('_gtin', 'gtin', '_alg_gtin');
-        foreach ($gtin_meta_keys as $meta_key) {
-            $value = $product->get_meta($meta_key);
+        $gtin_meta_keys = array('_gtin', 'gtin', '_alg_gtin', '_wpm_gtin_code');
+        $barcodes['gtin'] = $this->get_meta_from_product_or_parent($product_id, $parent_id, $gtin_meta_keys);
+        
+        return $barcodes;
+    }
+    
+    /**
+     * Get meta value from product or parent using get_post_meta().
+     * Checks variation first, then parent product if variation meta is empty.
+     * Uses get_post_meta() directly for better compatibility with third-party plugins.
+     * 
+     * @param int $product_id The product/variation ID
+     * @param int $parent_id The parent product ID (0 if not a variation)
+     * @param array $meta_keys Array of meta keys to check
+     * @return string The meta value or empty string
+     */
+    private function get_meta_from_product_or_parent($product_id, $parent_id, $meta_keys) {
+        // First check the product/variation itself
+        foreach ($meta_keys as $meta_key) {
+            $value = get_post_meta($product_id, $meta_key, true);
             if (!empty($value)) {
-                $barcodes['gtin'] = $value;
-                break;
+                return $value;
             }
         }
         
-        return $barcodes;
+        // If variation and no value found, check parent product
+        if ($parent_id > 0) {
+            foreach ($meta_keys as $meta_key) {
+                $value = get_post_meta($parent_id, $meta_key, true);
+                if (!empty($value)) {
+                    return $value;
+                }
+            }
+        }
+        
+        return '';
     }
     
     /**
