@@ -36,11 +36,17 @@ function StoreConfig({ onConnected }: StoreConfigProps) {
     if (savedName) setPickerName(savedName)
   }, [])
 
+  // UTF-8 safe base64 decode function
+  const base64DecodeUtf8 = (str: string): string => {
+    return decodeURIComponent(escape(atob(str)))
+  }
+
   // Handle QR code scan - parse the base64 encoded JSON and auto-fill fields
   const handleQrScan = (scannedData: string) => {
     try {
       // The QR code contains base64 encoded JSON with store_url, api_key, store_name, rest_url
-      const decodedData = JSON.parse(atob(scannedData))
+      // Use UTF-8 safe decoder to handle special characters (accents, ñ, etc.)
+      const decodedData = JSON.parse(base64DecodeUtf8(scannedData))
       
       if (decodedData.store_url) {
         setStoreUrl(decodedData.store_url)

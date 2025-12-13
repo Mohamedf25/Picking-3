@@ -470,6 +470,10 @@
             }
         },
 
+        base64EncodeUtf8: function(str) {
+            return btoa(unescape(encodeURIComponent(str)));
+        },
+
         updateQRCode: function(apiKey) {
             var connectionData = {
                 store_url: pickingAdmin.siteUrl,
@@ -478,7 +482,7 @@
                 rest_url: pickingAdmin.restUrl + 'picking/v1'
             };
             
-            var connectionString = btoa(JSON.stringify(connectionData));
+            var connectionString = this.base64EncodeUtf8(JSON.stringify(connectionData));
             
             var canvas = document.getElementById('qr-code');
             if (canvas && typeof QRCode !== 'undefined') {

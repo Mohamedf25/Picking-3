@@ -40,9 +40,9 @@ class Picking_Admin {
         
         wp_enqueue_script(
             'qrcode-js',
-            'https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js',
+            PICKING_PLUGIN_URL . 'admin/js/qrcode.min.js',
             array(),
-            '1.5.1',
+            PICKING_VERSION,
             true
         );
         
