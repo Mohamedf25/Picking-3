@@ -151,6 +151,9 @@ function PickingSession() {
   const [selectedExitReason, setSelectedExitReason] = useState('')
   const [customExitReason, setCustomExitReason] = useState('')
   const [exiting, setExiting] = useState(false)
+  
+  // Ref to track if we're intentionally navigating away (to disable back button interception)
+  const isNavigatingAwayRef = useRef(false)
 
   // Get store config from localStorage
   const storeUrl = localStorage.getItem('store_url') || ''
@@ -165,6 +168,43 @@ function PickingSession() {
       fetchOrderProducts()
     }
   }, [currentOrderId])
+
+  // Browser back button interception
+  useEffect(() => {
+    // Push a sentinel state to detect back navigation
+    window.history.pushState({ pickingExitGuard: true }, '', window.location.href)
+    
+    const handlePopState = (_event: PopStateEvent) => {
+      // If we're intentionally navigating away, don't intercept
+      if (isNavigatingAwayRef.current) {
+        return
+      }
+      
+      // Re-push the sentinel state to stay on the page
+      window.history.pushState({ pickingExitGuard: true }, '', window.location.href)
+      
+      // Show the exit confirmation dialog
+      setExitDialog(true)
+    }
+    
+    // Handle page refresh/close with beforeunload
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      // Only show warning if there's an active picking session
+      if (!isNavigatingAwayRef.current) {
+        event.preventDefault()
+        event.returnValue = ''
+        return ''
+      }
+    }
+    
+    window.addEventListener('popstate', handlePopState)
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    
+    return () => {
+      window.removeEventListener('popstate', handlePopState)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [])
 
   const fetchOrderProducts = async () => {
     try {
@@ -866,16 +906,42 @@ function PickingSession() {
       setExitDialog(false)
       setSelectedExitReason('')
       setCustomExitReason('')
-      navigate('/orders')
+      
+      // Disable back button interception before navigating
+      isNavigatingAwayRef.current = true
+      navigate('/orders', { replace: true })
     } catch (err: any) {
-      if (err.response?.status === 401 || err.response?.status === 403) {
+      const status = err?.response?.status
+      const code = err?.response?.data?.code
+      const message = err?.response?.data?.message || err?.message || ''
+      
+      if (status === 401 || status === 403) {
         showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
           localStorage.removeItem('user_logged_in')
           localStorage.removeItem('picking_user')
           window.location.href = '/'
         })
+      } else if (
+        status === 404 || 
+        status === 405 || 
+        code === 'rest_no_route' ||
+        message.includes('No se ha encontrado ninguna ruta')
+      ) {
+        // Route mismatch error - show error briefly and redirect to orders
+        showWarning('Salida Incompleta', 'No se pudo registrar la salida en el servidor. Redirigiendo a pedidos...')
+        setExitDialog(false)
+        setSelectedExitReason('')
+        setCustomExitReason('')
+        
+        // Disable back button interception before navigating
+        isNavigatingAwayRef.current = true
+        
+        // Redirect to orders after a brief delay to show the warning
+        setTimeout(() => {
+          navigate('/orders', { replace: true })
+        }, 1500)
       } else {
-        showError('Error', err.response?.data?.message || 'Error al salir del picking')
+        showError('Error', message || 'Error al salir del picking')
       }
     } finally {
       setExiting(false)
