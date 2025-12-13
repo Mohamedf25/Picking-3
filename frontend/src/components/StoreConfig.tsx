@@ -8,9 +8,11 @@ import {
   Box,
   Alert,
   CircularProgress,
+  Divider,
 } from '@mui/material'
-import { Store, CheckCircle } from '@mui/icons-material'
+import { Store, CheckCircle, QrCodeScanner } from '@mui/icons-material'
 import axios from 'axios'
+import CameraScanner from './CameraScanner'
 
 interface StoreConfigProps {
   onConnected: () => void
@@ -23,6 +25,7 @@ function StoreConfig({ onConnected }: StoreConfigProps) {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
+  const [qrScannerOpen, setQrScannerOpen] = useState(false)
 
   useEffect(() => {
     const savedUrl = localStorage.getItem('store_url')
@@ -32,6 +35,28 @@ function StoreConfig({ onConnected }: StoreConfigProps) {
     if (savedKey) setApiKey(savedKey)
     if (savedName) setPickerName(savedName)
   }, [])
+
+  // Handle QR code scan - parse the base64 encoded JSON and auto-fill fields
+  const handleQrScan = (scannedData: string) => {
+    try {
+      // The QR code contains base64 encoded JSON with store_url, api_key, store_name, rest_url
+      const decodedData = JSON.parse(atob(scannedData))
+      
+      if (decodedData.store_url) {
+        setStoreUrl(decodedData.store_url)
+      }
+      if (decodedData.api_key) {
+        setApiKey(decodedData.api_key)
+      }
+      
+      setSuccess('Datos de conexion cargados desde el codigo QR. Ingresa tu nombre y conecta.')
+      setError('')
+    } catch (err) {
+      // If parsing fails, it might be a different format or invalid QR
+      setError('Codigo QR no valido. Asegurate de escanear el codigo QR del plugin Picking Connector.')
+      setSuccess('')
+    }
+  }
 
   const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -114,6 +139,29 @@ function StoreConfig({ onConnected }: StoreConfigProps) {
             </Alert>
           )}
 
+          {/* QR Scanner Button - Quick connection option */}
+          <Button
+            fullWidth
+            variant="outlined"
+            onClick={() => setQrScannerOpen(true)}
+            startIcon={<QrCodeScanner />}
+            sx={{ 
+              mb: 2,
+              py: 1.5,
+              borderColor: '#1e3a5f',
+              color: '#1e3a5f',
+              '&:hover': { borderColor: '#2d4a6f', bgcolor: 'rgba(30, 58, 95, 0.04)' }
+            }}
+          >
+            Escanear Codigo QR
+          </Button>
+
+          <Divider sx={{ mb: 2 }}>
+            <Typography variant="caption" color="text.secondary">
+              o ingresa manualmente
+            </Typography>
+          </Divider>
+
           <form onSubmit={handleConnect}>
             <TextField
               fullWidth
@@ -169,13 +217,21 @@ function StoreConfig({ onConnected }: StoreConfigProps) {
             </Typography>
             <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>
               1. Instala el plugin "Picking Connector" en WordPress<br />
-              2. Ve a Picking Connector en el menu de WordPress<br />
-              3. Genera una API Key en Configuracion<br />
-              4. Copia la API Key y pegala aqui
+              2. Ve a Picking Connector {'>'} Conexion<br />
+              3. Escanea el codigo QR con el boton de arriba<br />
+              4. O copia la API Key manualmente
             </Typography>
           </Box>
         </CardContent>
       </Card>
+
+      {/* QR Scanner Dialog */}
+      <CameraScanner
+        open={qrScannerOpen}
+        onClose={() => setQrScannerOpen(false)}
+        onScan={handleQrScan}
+        title="Escanear Codigo QR de Conexion"
+      />
     </Box>
   )
 }

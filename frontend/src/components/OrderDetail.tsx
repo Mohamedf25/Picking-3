@@ -75,11 +75,14 @@ function OrderDetail() {
 
   const fetchOrder = async () => {
     try {
+      // Use view_only=true to fetch order data without claiming it
+      // This allows viewing order details without starting the picking process
       const response = await axios.get(`${storeUrl}/wp-json/picking/v1/get-order-products`, {
         params: {
           token: apiKey,
           order_id: orderId,
-          appuser: pickerName
+          appuser: pickerName,
+          view_only: 'true'
         }
       })
       
@@ -117,11 +120,34 @@ function OrderDetail() {
     }
   }
 
+  const [startingPicking, setStartingPicking] = useState(false)
+
   const startPickingSession = async () => {
     if (!orderId) return
     
-    // Navigate directly to picking session - the order is already claimed when we fetched it
-    navigate(`/picking/${orderId}`)
+    setStartingPicking(true)
+    
+    try {
+      // Explicitly start the picking session by calling the start-picking endpoint
+      // This claims the order and sets picking_status, user_claimed, picking_started_at
+      await axios.post(`${storeUrl}/wp-json/picking/v1/start-picking`, {
+        order_id: orderId,
+        appuser: pickerName,
+      }, {
+        params: { token: apiKey }
+      })
+      
+      // Navigate to picking session after successfully starting
+      navigate(`/picking/${orderId}`)
+    } catch (err: any) {
+      if (err.response?.status === 403) {
+        setError(err.response?.data?.message || 'Este pedido ya esta siendo trabajado por otro usuario')
+      } else {
+        setError('Error al iniciar el picking')
+      }
+    } finally {
+      setStartingPicking(false)
+    }
   }
 
   const getStatusColor = (status: string) => {
@@ -361,12 +387,12 @@ function OrderDetail() {
         variant="contained"
         size="large"
         fullWidth
-        startIcon={<PlayArrow />}
+        startIcon={startingPicking ? <CircularProgress size={20} color="inherit" /> : <PlayArrow />}
         onClick={startPickingSession}
-        disabled={!order.availableForPicking}
+        disabled={!order.availableForPicking || startingPicking}
         sx={{ py: 2 }}
       >
-        Iniciar Picking
+        {startingPicking ? 'Iniciando...' : 'Iniciar Picking'}
       </Button>
 
       {!order.availableForPicking && (
