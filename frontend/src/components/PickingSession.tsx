@@ -248,6 +248,52 @@ function PickingSession() {
     }
   }
 
+  const playErrorSound = () => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const oscillator = audioContext.createOscillator()
+      const gainNode = audioContext.createGain()
+      
+      oscillator.connect(gainNode)
+      gainNode.connect(audioContext.destination)
+      
+      oscillator.frequency.value = 400
+      oscillator.type = 'square'
+      gainNode.gain.value = 0.3
+      
+      oscillator.start()
+      setTimeout(() => {
+        oscillator.stop()
+        audioContext.close()
+      }, 300)
+    } catch (e) {
+      console.log('Audio not supported')
+    }
+  }
+
+  const playSuccessSound = () => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const oscillator = audioContext.createOscillator()
+      const gainNode = audioContext.createGain()
+      
+      oscillator.connect(gainNode)
+      gainNode.connect(audioContext.destination)
+      
+      oscillator.frequency.value = 800
+      oscillator.type = 'sine'
+      gainNode.gain.value = 0.2
+      
+      oscillator.start()
+      setTimeout(() => {
+        oscillator.stop()
+        audioContext.close()
+      }, 150)
+    } catch (e) {
+      console.log('Audio not supported')
+    }
+  }
+
   const handleScan = async (ean?: string) => {
     const eanToScan = ean || scanValue.trim()
     if (!eanToScan) return
@@ -311,6 +357,7 @@ function PickingSession() {
       }, {
         params: { token: apiKey }
       })
+      playSuccessSound()
       
       // If no matching line was found locally but API succeeded, refresh to get updated data
       if (!matchingLine) {
@@ -320,12 +367,12 @@ function PickingSession() {
       }
       // If optimistic update was applied, no need to fetch again - API confirmed success
     } catch (err: any) {
+      playErrorSound()
       // Rollback optimistic update on error
       if (matchingLine) {
         setProductLines(previousLines)
         setProgress(previousProgress)
       }
-      
       if (err.response?.status === 401 || err.response?.status === 403) {
         showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
           localStorage.removeItem('user_logged_in')
@@ -333,7 +380,7 @@ function PickingSession() {
           window.location.href = '/'
         })
       } else if (err.response?.status === 404) {
-        showError('Producto No Encontrado', 'El codigo escaneado no corresponde a ningun producto de este pedido.')
+        showError('Producto No Encontrado', 'El codigo escaneado no corresponde a ningun producto de este pedido. Verifique EAN/GTIN/SKU.')
       } else if (err.response?.status === 400 && err.response?.data?.code === 'already_picked') {
         showWarning('Producto Completado', 'Este producto ya ha sido escaneado completamente.')
       } else {

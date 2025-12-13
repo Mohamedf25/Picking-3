@@ -42,7 +42,10 @@ class Token(BaseModel):
 class LineItem(BaseModel):
     id: int
     name: str
-    ean: str
+    sku: Optional[str] = None
+    ean: Optional[str] = None
+    gtin: Optional[str] = None
+    upc: Optional[str] = None
     quantity: int
     product_id: int
     image_url: Optional[str] = None
@@ -67,7 +70,11 @@ class SessionResponse(BaseModel):
         from_attributes = True
 
 class ScanRequest(BaseModel):
-    ean: str
+    code: str
+    ean: Optional[str] = None
+    gtin: Optional[str] = None
+    upc: Optional[str] = None
+    sku: Optional[str] = None
 
 class PhotoResponse(BaseModel):
     id: uuid.UUID
