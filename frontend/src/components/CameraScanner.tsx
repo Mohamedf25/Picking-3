@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { BrowserMultiFormatReader } from '@zxing/browser'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { BrowserMultiFormatReader, IScannerControls } from '@zxing/browser'
 import {
   Dialog,
   DialogTitle,
@@ -24,64 +24,143 @@ interface CameraScannerProps {
 
 function CameraScanner({ open, onClose, onScan, title = "Escanear Código" }: CameraScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const [codeReader, setCodeReader] = useState<BrowserMultiFormatReader | null>(null)
+  const controlsRef = useRef<IScannerControls | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const isInitializingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [manualInput, setManualInput] = useState('')
   const [useCameraMode, setUseCameraMode] = useState(true)
   const [isScanning, setIsScanning] = useState(false)
 
+  const stopScanning = useCallback(() => {
+    try {
+      if (controlsRef.current) {
+        controlsRef.current.stop()
+        controlsRef.current = null
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+        streamRef.current = null
+      }
+      if (videoRef.current) {
+        if (videoRef.current.srcObject) {
+          const stream = videoRef.current.srcObject as MediaStream
+          stream.getTracks().forEach(track => track.stop())
+        }
+        videoRef.current.srcObject = null
+      }
+    } catch (err) {
+      console.log('Scanner cleanup error:', err)
+    }
+    setIsScanning(false)
+    isInitializingRef.current = false
+  }, [])
+
+  const initializeScanner = useCallback(async () => {
+    if (isInitializingRef.current) {
+      return
+    }
+    
+    stopScanning()
+    
+    isInitializingRef.current = true
+    setError(null)
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }
+      })
+      streamRef.current = stream
+      
+      if (!videoRef.current) {
+        stream.getTracks().forEach(track => track.stop())
+        isInitializingRef.current = false
+        return
+      }
+      
+      videoRef.current.srcObject = stream
+      
+      await new Promise<void>((resolve, reject) => {
+        const video = videoRef.current
+        if (!video) {
+          reject(new Error('Video element not available'))
+          return
+        }
+        
+        const onLoadedMetadata = () => {
+          video.removeEventListener('loadedmetadata', onLoadedMetadata)
+          video.removeEventListener('error', onError)
+          resolve()
+        }
+        
+        const onError = () => {
+          video.removeEventListener('loadedmetadata', onLoadedMetadata)
+          video.removeEventListener('error', onError)
+          reject(new Error('Video failed to load'))
+        }
+        
+        video.addEventListener('loadedmetadata', onLoadedMetadata)
+        video.addEventListener('error', onError)
+        
+        if (video.readyState >= 1) {
+          video.removeEventListener('loadedmetadata', onLoadedMetadata)
+          video.removeEventListener('error', onError)
+          resolve()
+        }
+      })
+      
+      await videoRef.current.play()
+      
+      const reader = new BrowserMultiFormatReader()
+      
+      const controls = await reader.decodeFromVideoDevice(
+        undefined,
+        videoRef.current,
+        (result, err) => {
+          if (result) {
+            const scannedText = result.getText()
+            onScan(scannedText)
+            onClose()
+          }
+          if (err && err.name !== 'NotFoundException') {
+            console.error('Scanning error:', err)
+          }
+        }
+      )
+      
+      controlsRef.current = controls
+      setIsScanning(true)
+      isInitializingRef.current = false
+      
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Error desconocido'
+      setError('Error al acceder a la cámara: ' + errorMessage)
+      setIsScanning(false)
+      isInitializingRef.current = false
+      
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+        streamRef.current = null
+      }
+    }
+  }, [onScan, onClose, stopScanning])
+
   useEffect(() => {
     if (open && useCameraMode) {
-      initializeScanner()
+      const timeoutId = setTimeout(() => {
+        initializeScanner()
+      }, 100)
+      return () => {
+        clearTimeout(timeoutId)
+        stopScanning()
+      }
+    } else {
+      stopScanning()
     }
     return () => {
       stopScanning()
     }
-  }, [open, useCameraMode])
-
-  const initializeScanner = async () => {
-    try {
-      setError(null)
-      const reader = new BrowserMultiFormatReader()
-      setCodeReader(reader)
-
-      if (videoRef.current) {
-        setIsScanning(true)
-        await reader.decodeFromVideoDevice(
-          undefined,
-          videoRef.current,
-          (result, error) => {
-            if (result) {
-              const scannedText = result.getText()
-              onScan(scannedText)
-              onClose()
-            }
-            if (error && error.name !== 'NotFoundException') {
-              console.error('Scanning error:', error)
-            }
-          }
-        )
-      }
-    } catch (err: any) {
-      setError('Error al acceder a la cámara: ' + (err.message || 'Error desconocido'))
-      setIsScanning(false)
-    }
-  }
-
-  const stopScanning = () => {
-    if (codeReader) {
-      try {
-        const videoElement = videoRef.current
-        if (videoElement && videoElement.srcObject) {
-          const stream = videoElement.srcObject as MediaStream
-          stream.getTracks().forEach(track => track.stop())
-        }
-      } catch (error) {
-        console.log('Scanner reset error:', error)
-      }
-      setIsScanning(false)
-    }
-  }
+  }, [open, useCameraMode, initializeScanner, stopScanning])
 
   const handleManualSubmit = () => {
     if (manualInput.trim()) {
