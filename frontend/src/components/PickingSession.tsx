@@ -150,7 +150,7 @@ function PickingSession() {
   ]
   const [selectedExitReason, setSelectedExitReason] = useState('')
   const [customExitReason, setCustomExitReason] = useState('')
-  const [exiting, setExiting] = useState(false)
+  const [_exiting, _setExiting] = useState(false)
   
   // Ref to track if we're intentionally navigating away (to disable back button interception)
   const isNavigatingAwayRef = useRef(false)
@@ -883,69 +883,38 @@ function PickingSession() {
     setIsTakingPhoto(false)
   }
 
-  const handleExitPicking = async () => {
+  const handleExitPicking = () => {
     if (!selectedExitReason) {
       showError('Motivo Requerido', 'Por favor seleccione un motivo para salir del picking.')
       return
     }
 
-    setExiting(true)
-    setError('')
-
-    try {
-      await axios.post(`${storeUrl}/wp-json/picking/v1/exit-picking`, {
-        order_id: currentOrderId,
-        appuser: pickerName,
-        reason_id: selectedExitReason,
-        reason_text: selectedExitReason === 'otro' ? customExitReason : '',
-      }, {
-        params: { token: apiKey }
-      })
-
-      showSuccess('Sesion Finalizada', 'El pedido queda disponible para otros usuarios.')
-      setExitDialog(false)
-      setSelectedExitReason('')
-      setCustomExitReason('')
-      
-      // Disable back button interception before navigating
-      isNavigatingAwayRef.current = true
-      navigate('/orders', { replace: true })
-    } catch (err: any) {
-      const status = err?.response?.status
-      const code = err?.response?.data?.code
-      const message = err?.response?.data?.message || err?.message || ''
-      
-      if (status === 401 || status === 403) {
-        showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
-          localStorage.removeItem('user_logged_in')
-          localStorage.removeItem('picking_user')
-          window.location.href = '/'
-        })
-      } else if (
-        status === 404 || 
-        status === 405 || 
-        code === 'rest_no_route' ||
-        message.includes('No se ha encontrado ninguna ruta')
-      ) {
-        // Route mismatch error - show error briefly and redirect to orders
-        showWarning('Salida Incompleta', 'No se pudo registrar la salida en el servidor. Redirigiendo a pedidos...')
-        setExitDialog(false)
-        setSelectedExitReason('')
-        setCustomExitReason('')
-        
-        // Disable back button interception before navigating
-        isNavigatingAwayRef.current = true
-        
-        // Redirect to orders after a brief delay to show the warning
-        setTimeout(() => {
-          navigate('/orders', { replace: true })
-        }, 1500)
-      } else {
-        showError('Error', message || 'Error al salir del picking')
-      }
-    } finally {
-      setExiting(false)
-    }
+    // Close dialog and navigate immediately - never block the user
+    setExitDialog(false)
+    
+    // Disable back button interception before navigating
+    isNavigatingAwayRef.current = true
+    
+    // Show success message
+    showSuccess('Sesion Finalizada', 'El pedido queda disponible para otros usuarios.')
+    
+    // Navigate to orders immediately - don't wait for API
+    navigate('/orders', { replace: true })
+    
+    // Fire-and-forget: attempt to register exit in background (best-effort)
+    // This call is non-blocking and won't prevent navigation
+    axios.post(`${storeUrl}/wp-json/picking/v1/exit-picking`, {
+      order_id: currentOrderId,
+      appuser: pickerName,
+      reason_id: selectedExitReason,
+      reason_text: selectedExitReason === 'otro' ? customExitReason : '',
+    }, {
+      params: { token: apiKey },
+      timeout: 5000
+    }).catch((err) => {
+      // Best-effort: log error but don't block user or show critical errors
+      console.warn('Exit picking registration failed (best-effort):', err?.message || err)
+    })
   }
 
   const handleBackClick = () => {
@@ -1858,7 +1827,7 @@ function PickingSession() {
       {/* Exit Picking Dialog */}
       <Dialog 
         open={exitDialog} 
-        onClose={() => !exiting && setExitDialog(false)}
+        onClose={() => setExitDialog(false)}
         maxWidth="sm"
         fullWidth
       >
@@ -1906,7 +1875,6 @@ function PickingSession() {
               setSelectedExitReason('')
               setCustomExitReason('')
             }}
-            disabled={exiting}
           >
             Cancelar
           </Button>
@@ -1914,10 +1882,10 @@ function PickingSession() {
             onClick={handleExitPicking}
             variant="contained"
             color="warning"
-            disabled={!selectedExitReason || (selectedExitReason === 'otro' && !customExitReason.trim()) || exiting}
-            startIcon={exiting ? <CircularProgress size={20} /> : <ArrowBack />}
+            disabled={!selectedExitReason || (selectedExitReason === 'otro' && !customExitReason.trim())}
+            startIcon={<ArrowBack />}
           >
-            {exiting ? 'Saliendo...' : 'Confirmar Salida'}
+            Confirmar Salida
           </Button>
         </DialogActions>
       </Dialog>
