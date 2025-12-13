@@ -101,6 +101,7 @@ function PickingSession() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [photoDialog, setPhotoDialog] = useState(false)
+  const [videoDialog, setVideoDialog] = useState(false)
   const [finishDialog, setFinishDialog] = useState(false)
   const [photos, setPhotos] = useState<string[]>([])
   const [evidence, setEvidence] = useState<EvidenceItem[]>([])
@@ -111,7 +112,10 @@ function PickingSession() {
   const [videoPlayerOpen, setVideoPlayerOpen] = useState(false)
   const [currentVideoUrl, setCurrentVideoUrl] = useState('')
   const [isRecordingVideo, setIsRecordingVideo] = useState(false)
+  const [isTakingPhoto, setIsTakingPhoto] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const photoVideoRef = useRef<HTMLVideoElement>(null)
+  const photoStreamRef = useRef<MediaStream | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const navigate = useNavigate()
@@ -248,10 +252,57 @@ function PickingSession() {
     const eanToScan = ean || scanValue.trim()
     if (!eanToScan) return
 
+    const eanLower = eanToScan.toLowerCase()
+    
+    // Find matching product for optimistic update
+    const matchingLine = productLines.find(line => 
+      line.ean?.toLowerCase() === eanLower ||
+      line.ian?.toLowerCase() === eanLower ||
+      line.gtin?.toLowerCase() === eanLower ||
+      line.cnd?.toLowerCase() === eanLower ||
+      line.sku?.toLowerCase() === eanLower
+    )
+
+    // Check if product is already fully picked
+    if (matchingLine && matchingLine.picked_qty >= matchingLine.quantity) {
+      showWarning('Producto Completado', 'Este producto ya ha sido escaneado completamente.')
+      setScanValue('')
+      return
+    }
+
+    // Store previous state for potential rollback
+    const previousLines = [...productLines]
+    const previousProgress = progress
+
+    // Optimistic UI update - update immediately without waiting for API
+    if (matchingLine) {
+      const updatedLines = productLines.map(line => {
+        if (line.item_id === matchingLine.item_id) {
+          return {
+            ...line,
+            picked_qty: Math.min(line.picked_qty + 1, line.quantity)
+          }
+        }
+        return line
+      })
+      setProductLines(updatedLines)
+      
+      // Update progress optimistically
+      const totalExpected = updatedLines.reduce((sum, line) => sum + line.quantity, 0)
+      const totalPicked = updatedLines.reduce((sum, line) => sum + line.picked_qty, 0)
+      setProgress(totalExpected > 0 ? (totalPicked / totalExpected) * 100 : 0)
+      
+      // Show success immediately
+      showSuccess('Producto Escaneado', `Codigo: ${eanToScan}`)
+      setScanValue('')
+    }
+
+    // Set scanning state briefly for visual feedback
     setScanning(true)
     setError('')
     setSuccess('')
 
+    // Make API call in background (async)
     try {
       await axios.post(`${storeUrl}/wp-json/picking/v1/scan-product`, {
         order_id: currentOrderId,
@@ -260,11 +311,21 @@ function PickingSession() {
       }, {
         params: { token: apiKey }
       })
-      showSuccess('Producto Escaneado', `Codigo: ${eanToScan}`)
-      setScanValue('')
       
-      await fetchOrderProducts()
+      // If no matching line was found locally but API succeeded, refresh to get updated data
+      if (!matchingLine) {
+        showSuccess('Producto Escaneado', `Codigo: ${eanToScan}`)
+        setScanValue('')
+        await fetchOrderProducts()
+      }
+      // If optimistic update was applied, no need to fetch again - API confirmed success
     } catch (err: any) {
+      // Rollback optimistic update on error
+      if (matchingLine) {
+        setProductLines(previousLines)
+        setProgress(previousProgress)
+      }
+      
       if (err.response?.status === 401 || err.response?.status === 403) {
         showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
           localStorage.removeItem('user_logged_in')
@@ -571,7 +632,7 @@ function PickingSession() {
       setEvidence(prev => [...prev, newEvidence])
       setPhotos(prev => [...prev, newEvidence.url])
       showSuccess('Video Subido', 'El video ha sido subido correctamente.')
-      setPhotoDialog(false)
+      setVideoDialog(false)
     } catch (err: any) {
       if (err.response?.status === 401 || err.response?.status === 403) {
         showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
@@ -625,7 +686,7 @@ function PickingSession() {
       setEvidence(prev => [...prev, newEvidence])
       setPhotos(prev => [...prev, newEvidence.url])
       showSuccess('Video Subido', 'El video ha sido subido correctamente.')
-      setPhotoDialog(false)
+      setVideoDialog(false)
     } catch (err: any) {
       if (err.response?.status === 401 || err.response?.status === 403) {
         showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
@@ -644,6 +705,95 @@ function PickingSession() {
   const openVideoPlayer = (url: string) => {
     setCurrentVideoUrl(url)
     setVideoPlayerOpen(true)
+  }
+
+  // Camera photo functions
+  const startPhotoCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'environment' }
+      })
+      
+      photoStreamRef.current = stream
+      
+      if (photoVideoRef.current) {
+        photoVideoRef.current.srcObject = stream
+        photoVideoRef.current.play()
+      }
+      
+      setIsTakingPhoto(true)
+    } catch (err) {
+      showError('Error de Camara', 'No se pudo acceder a la camara. Por favor, verifique los permisos.')
+    }
+  }
+
+  const capturePhoto = async () => {
+    if (!photoVideoRef.current || !photoStreamRef.current) return
+    
+    setUploading(true)
+    
+    try {
+      // Create canvas to capture the photo
+      const video = photoVideoRef.current
+      const canvas = document.createElement('canvas')
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+      const ctx = canvas.getContext('2d')
+      
+      if (ctx) {
+        ctx.drawImage(video, 0, 0)
+        
+        // Convert canvas to blob
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((blob) => {
+            if (blob) resolve(blob)
+            else reject(new Error('Failed to create blob'))
+          }, 'image/jpeg', 0.9)
+        })
+        
+        // Create file from blob
+        const file = new File([blob], `photo_${Date.now()}.jpg`, { type: 'image/jpeg' })
+        
+        // Upload the photo
+        const formData = new FormData()
+        formData.append('photo', file)
+        formData.append('order_id', currentOrderId || '')
+        formData.append('appuser', pickerName)
+
+        const response = await axios.post(
+          `${storeUrl}/wp-json/picking/v1/upload-photo`,
+          formData,
+          {
+            params: { token: apiKey },
+          }
+        )
+
+        setPhotos(prev => [...prev, response.data.url || response.data.photo_url || 'uploaded'])
+        showSuccess('Foto Capturada', 'La foto ha sido subida correctamente.')
+        stopPhotoCamera()
+        setPhotoDialog(false)
+      }
+    } catch (err: any) {
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
+          localStorage.removeItem('user_logged_in')
+          localStorage.removeItem('picking_user')
+          window.location.href = '/'
+        })
+      } else {
+        showError('Error de Subida', err.response?.data?.message || 'Error al subir la foto')
+      }
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const stopPhotoCamera = () => {
+    if (photoStreamRef.current) {
+      photoStreamRef.current.getTracks().forEach(track => track.stop())
+      photoStreamRef.current = null
+    }
+    setIsTakingPhoto(false)
   }
 
   const handleExitPicking = async () => {
@@ -800,6 +950,70 @@ function PickingSession() {
           <Typography variant="body2" color="text.secondary">
             {Math.round(progress)}% completado ({productLines.filter(line => line.picked_qty >= line.quantity).length} de {productLines.length} productos)
           </Typography>
+        </CardContent>
+      </Card>
+
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Typography variant="h6" gutterBottom sx={{ fontSize: { xs: '1.1rem', sm: '1.25rem' } }}>
+            Escanear Producto
+          </Typography>
+          <Box sx={{ 
+            display: 'flex', 
+            flexDirection: { xs: 'column', sm: 'row' },
+            gap: { xs: 1.5, sm: 1 }, 
+            mb: 2 
+          }}>
+            <TextField
+              fullWidth
+              label="EAN / Código de barras"
+              value={scanValue}
+              onChange={(e) => setScanValue(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleScan()}
+              placeholder="Escanee o ingrese el código EAN, CND o SKU"
+              sx={{
+                '& .MuiInputBase-root': {
+                  fontSize: { xs: '1rem', sm: '0.9rem' },
+                  minHeight: { xs: 56, sm: 40 }
+                }
+              }}
+            />
+            <Box sx={{ 
+              display: 'flex', 
+              gap: 1,
+              flexDirection: { xs: 'row', sm: 'row' },
+              width: { xs: '100%', sm: 'auto' }
+            }}>
+              <Button
+                variant="outlined"
+                onClick={() => setScannerOpen(true)}
+                disabled={scanning}
+                startIcon={<PhotoCamera />}
+                sx={{ 
+                  minWidth: { xs: 'auto', sm: 100 },
+                  flex: { xs: 1, sm: 'none' },
+                  py: { xs: 1.5, sm: 1 },
+                  fontSize: { xs: '0.9rem', sm: '0.875rem' }
+                }}
+              >
+                Cámara
+              </Button>
+              <Button
+                variant="contained"
+                onClick={() => handleScan()}
+                disabled={scanning || !scanValue.trim()}
+                startIcon={scanning ? <CircularProgress size={20} /> : <QrCodeScanner />}
+                sx={{ 
+                  minWidth: { xs: 'auto', sm: 120 },
+                  flex: { xs: 1, sm: 'none' },
+                  py: { xs: 1.5, sm: 1 },
+                  fontSize: { xs: '0.9rem', sm: '0.875rem' }
+                }}
+              >
+                {scanning ? 'Escaneando...' : 'Escanear'}
+              </Button>
+            </Box>
+          </Box>
         </CardContent>
       </Card>
 
@@ -992,70 +1206,6 @@ function PickingSession() {
 
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Typography variant="h6" gutterBottom sx={{ fontSize: { xs: '1.1rem', sm: '1.25rem' } }}>
-            Escanear Producto
-          </Typography>
-          <Box sx={{ 
-            display: 'flex', 
-            flexDirection: { xs: 'column', sm: 'row' },
-            gap: { xs: 1.5, sm: 1 }, 
-            mb: 2 
-          }}>
-            <TextField
-              fullWidth
-              label="EAN / Código de barras"
-              value={scanValue}
-              onChange={(e) => setScanValue(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleScan()}
-              placeholder="Escanee o ingrese el código EAN, CND o SKU"
-              sx={{
-                '& .MuiInputBase-root': {
-                  fontSize: { xs: '1rem', sm: '0.9rem' },
-                  minHeight: { xs: 56, sm: 40 }
-                }
-              }}
-            />
-            <Box sx={{ 
-              display: 'flex', 
-              gap: 1,
-              flexDirection: { xs: 'row', sm: 'row' },
-              width: { xs: '100%', sm: 'auto' }
-            }}>
-              <Button
-                variant="outlined"
-                onClick={() => setScannerOpen(true)}
-                disabled={scanning}
-                startIcon={<PhotoCamera />}
-                sx={{ 
-                  minWidth: { xs: 'auto', sm: 100 },
-                  flex: { xs: 1, sm: 'none' },
-                  py: { xs: 1.5, sm: 1 },
-                  fontSize: { xs: '0.9rem', sm: '0.875rem' }
-                }}
-              >
-                Cámara
-              </Button>
-              <Button
-                variant="contained"
-                onClick={() => handleScan()}
-                disabled={scanning || !scanValue.trim()}
-                startIcon={scanning ? <CircularProgress size={20} /> : <QrCodeScanner />}
-                sx={{ 
-                  minWidth: { xs: 'auto', sm: 120 },
-                  flex: { xs: 1, sm: 'none' },
-                  py: { xs: 1.5, sm: 1 },
-                  fontSize: { xs: '0.9rem', sm: '0.875rem' }
-                }}
-              >
-                {scanning ? 'Escaneando...' : 'Escanear'}
-              </Button>
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
-
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
             <Typography variant="h6">
               Evidencia ({photos.length + evidence.length})
@@ -1072,7 +1222,7 @@ function PickingSession() {
               <Button
                 variant="outlined"
                 startIcon={<Videocam />}
-                onClick={() => setPhotoDialog(true)}
+                onClick={() => setVideoDialog(true)}
                 size="small"
                 color="secondary"
               >
@@ -1178,8 +1328,107 @@ function PickingSession() {
         Finalizar Pedido
       </Button>
 
-      <Dialog open={photoDialog} onClose={() => !isRecordingVideo && setPhotoDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Subir Evidencia</DialogTitle>
+      {/* Photo Dialog - Camera and Gallery options */}
+      <Dialog open={photoDialog} onClose={() => !isTakingPhoto && !uploading && setPhotoDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Subir Foto</DialogTitle>
+        <DialogContent>
+          {isTakingPhoto ? (
+            <Box sx={{ textAlign: 'center', py: 2 }}>
+              <Box sx={{ position: 'relative', width: '100%', maxWidth: 400, mx: 'auto', mb: 2 }}>
+                <video
+                  ref={photoVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  style={{ width: '100%', borderRadius: 8, backgroundColor: '#000' }}
+                />
+              </Box>
+              <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={capturePhoto}
+                  startIcon={uploading ? <CircularProgress size={20} /> : <PhotoCamera />}
+                  size="large"
+                  disabled={uploading}
+                >
+                  {uploading ? 'Subiendo...' : 'Capturar Foto'}
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  onClick={stopPhotoCamera}
+                  startIcon={<Close />}
+                  size="large"
+                  disabled={uploading}
+                >
+                  Cancelar
+                </Button>
+              </Box>
+            </Box>
+          ) : (
+            <Box sx={{ py: 2 }}>
+              <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', textAlign: 'center' }}>
+                Seleccione como desea agregar la foto
+              </Typography>
+              
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
+                {/* Take photo with camera */}
+                <Box sx={{ textAlign: 'center', p: 2, border: '1px dashed', borderColor: 'primary.main', borderRadius: 2 }}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    onClick={startPhotoCamera}
+                    disabled={uploading}
+                    startIcon={<PhotoCamera />}
+                    fullWidth
+                  >
+                    Tomar Foto con Camara
+                  </Button>
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                    Abre la camara para tomar una foto
+                  </Typography>
+                </Box>
+
+                {/* Upload photo from gallery */}
+                <Box sx={{ textAlign: 'center', p: 2, border: '1px dashed', borderColor: 'grey.400', borderRadius: 2 }}>
+                  <input
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    id="photo-upload"
+                    type="file"
+                    onChange={handlePhotoUpload}
+                    disabled={uploading}
+                  />
+                  <label htmlFor="photo-upload">
+                    <Button
+                      variant="outlined"
+                      component="span"
+                      disabled={uploading}
+                      startIcon={uploading ? <CircularProgress size={20} /> : <PhotoCamera />}
+                      fullWidth
+                    >
+                      {uploading ? 'Subiendo...' : 'Subir Foto desde Galeria'}
+                    </Button>
+                  </label>
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                    Selecciona una imagen de tu dispositivo
+                  </Typography>
+                </Box>
+              </Box>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { stopPhotoCamera(); setPhotoDialog(false); }} disabled={uploading}>
+            Cancelar
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Video Dialog - Camera and Gallery options */}
+      <Dialog open={videoDialog} onClose={() => !isRecordingVideo && !uploading && setVideoDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Subir Video</DialogTitle>
         <DialogContent>
           {isRecordingVideo ? (
             <Box sx={{ textAlign: 'center', py: 2 }}>
@@ -1224,35 +1473,29 @@ function PickingSession() {
           ) : (
             <Box sx={{ py: 2 }}>
               <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', textAlign: 'center' }}>
-                Seleccione el tipo de evidencia
+                Seleccione como desea agregar el video
               </Typography>
               
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
-                {/* Photo upload */}
-                <Box sx={{ textAlign: 'center', p: 2, border: '1px dashed', borderColor: 'primary.main', borderRadius: 2 }}>
-                  <input
-                    accept="image/*"
-                    style={{ display: 'none' }}
-                    id="photo-upload"
-                    type="file"
-                    onChange={handlePhotoUpload}
+                {/* Record video with camera */}
+                <Box sx={{ textAlign: 'center', p: 2, border: '1px dashed', borderColor: 'secondary.main', borderRadius: 2 }}>
+                  <Button
+                    variant="contained"
+                    color="secondary"
+                    onClick={startVideoRecording}
                     disabled={uploading}
-                  />
-                  <label htmlFor="photo-upload">
-                    <Button
-                      variant="outlined"
-                      component="span"
-                      disabled={uploading}
-                      startIcon={uploading ? <CircularProgress size={20} /> : <PhotoCamera />}
-                      fullWidth
-                    >
-                      {uploading ? 'Subiendo...' : 'Subir Foto desde Galeria'}
-                    </Button>
-                  </label>
+                    startIcon={<Videocam />}
+                    fullWidth
+                  >
+                    Grabar Video con Camara
+                  </Button>
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                    Abre la camara para grabar un video
+                  </Typography>
                 </Box>
 
-                {/* Video upload */}
-                <Box sx={{ textAlign: 'center', p: 2, border: '1px dashed', borderColor: 'secondary.main', borderRadius: 2 }}>
+                {/* Upload video from gallery */}
+                <Box sx={{ textAlign: 'center', p: 2, border: '1px dashed', borderColor: 'grey.400', borderRadius: 2 }}>
                   <input
                     accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
                     style={{ display: 'none' }}
@@ -1273,22 +1516,8 @@ function PickingSession() {
                       {uploading ? 'Subiendo...' : 'Subir Video desde Galeria'}
                     </Button>
                   </label>
-                </Box>
-
-                {/* Record video */}
-                <Box sx={{ textAlign: 'center', p: 2, border: '1px dashed', borderColor: 'error.main', borderRadius: 2 }}>
-                  <Button
-                    variant="contained"
-                    color="error"
-                    onClick={startVideoRecording}
-                    disabled={uploading}
-                    startIcon={<Videocam />}
-                    fullWidth
-                  >
-                    Grabar Video
-                  </Button>
                   <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                    Abre la camara para grabar un video
+                    Selecciona un video de tu dispositivo
                   </Typography>
                 </Box>
               </Box>
@@ -1296,7 +1525,7 @@ function PickingSession() {
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setPhotoDialog(false)} disabled={uploading || isRecordingVideo}>
+          <Button onClick={() => setVideoDialog(false)} disabled={uploading || isRecordingVideo}>
             Cancelar
           </Button>
         </DialogActions>
