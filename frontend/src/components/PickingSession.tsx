@@ -340,7 +340,8 @@ function PickingSession() {
 
     const eanLower = eanToScan.toLowerCase()
     
-    // Find matching product for optimistic update
+    // LOCAL VALIDATION ONLY: Compare against loaded order data (source of truth)
+    // Check against: ean, ian, gtin, cnd, sku
     const matchingLine = productLines.find(line => 
       line.ean?.toLowerCase() === eanLower ||
       line.ian?.toLowerCase() === eanLower ||
@@ -349,46 +350,50 @@ function PickingSession() {
       line.sku?.toLowerCase() === eanLower
     )
 
+    // If no match found locally, show error immediately - no API call needed
+    if (!matchingLine) {
+      playErrorSound()
+      showError('Producto No Encontrado', 'El codigo escaneado no corresponde a ningun producto de este pedido. Verifique EAN/GTIN/SKU.')
+      setScanValue('')
+      return
+    }
+
     // Check if product is already fully picked
-    if (matchingLine && matchingLine.picked_qty >= matchingLine.quantity) {
+    if (matchingLine.picked_qty >= matchingLine.quantity) {
       showWarning('Producto Completado', 'Este producto ya ha sido escaneado completamente.')
       setScanValue('')
       return
     }
 
-    // Store previous state for potential rollback
-    const previousLines = [...productLines]
-    const previousProgress = progress
-
-    // Optimistic UI update - update immediately without waiting for API
-    if (matchingLine) {
-      const updatedLines = productLines.map(line => {
-        if (line.item_id === matchingLine.item_id) {
-          return {
-            ...line,
-            picked_qty: Math.min(line.picked_qty + 1, line.quantity)
-          }
+    // Update UI immediately - local data is the source of truth
+    const updatedLines = productLines.map(line => {
+      if (line.item_id === matchingLine.item_id) {
+        return {
+          ...line,
+          picked_qty: Math.min(line.picked_qty + 1, line.quantity)
         }
-        return line
-      })
-      setProductLines(updatedLines)
-      
-      // Update progress optimistically
-      const totalExpected = updatedLines.reduce((sum, line) => sum + line.quantity, 0)
-      const totalPicked = updatedLines.reduce((sum, line) => sum + line.picked_qty, 0)
-      setProgress(totalExpected > 0 ? (totalPicked / totalExpected) * 100 : 0)
-      
-      // Show success immediately
-      showSuccess('Producto Escaneado', `Codigo: ${eanToScan}`)
-      setScanValue('')
-    }
+      }
+      return line
+    })
+    setProductLines(updatedLines)
+    
+    // Update progress
+    const totalExpected = updatedLines.reduce((sum, line) => sum + line.quantity, 0)
+    const totalPicked = updatedLines.reduce((sum, line) => sum + line.picked_qty, 0)
+    setProgress(totalExpected > 0 ? (totalPicked / totalExpected) * 100 : 0)
+    
+    // Show success and play sound
+    playSuccessSound()
+    showSuccess('Producto Escaneado', `Codigo: ${eanToScan}`)
+    setScanValue('')
 
     // Set scanning state briefly for visual feedback
     setScanning(true)
     setError('')
     setSuccess('')
 
-    // Make API call in background (async)
+    // Make API call in background to save progress (fire-and-forget for persistence)
+    // This is only for saving progress, audit, and logging - NOT for validation
     try {
       await axios.post(`${storeUrl}/wp-json/picking/v1/scan-product`, {
         order_id: currentOrderId,
@@ -397,35 +402,20 @@ function PickingSession() {
       }, {
         params: { token: apiKey }
       })
-      playSuccessSound()
-      
-      // If no matching line was found locally but API succeeded, refresh to get updated data
-      if (!matchingLine) {
-        showSuccess('Producto Escaneado', `Codigo: ${eanToScan}`)
-        setScanValue('')
-        await fetchOrderProducts()
-      }
-      // If optimistic update was applied, no need to fetch again - API confirmed success
+      // API call succeeded - progress saved to backend
     } catch (err: any) {
-      playErrorSound()
-      // Rollback optimistic update on error
-      if (matchingLine) {
-        setProductLines(previousLines)
-        setProgress(previousProgress)
-      }
+      // Log error but don't rollback - local state is the source of truth
+      console.warn('Error saving scan to backend (progress may not be persisted):', err?.message || err)
+      
+      // Only handle auth errors that require user action
       if (err.response?.status === 401 || err.response?.status === 403) {
         showError('Sin Autorizacion', 'Sesion expirada o usuario inactivo. Por favor, inicie sesion de nuevo.', () => {
           localStorage.removeItem('user_logged_in')
           localStorage.removeItem('picking_user')
           window.location.href = '/'
         })
-      } else if (err.response?.status === 404) {
-        showError('Producto No Encontrado', 'El codigo escaneado no corresponde a ningun producto de este pedido. Verifique EAN/GTIN/SKU.')
-      } else if (err.response?.status === 400 && err.response?.data?.code === 'already_picked') {
-        showWarning('Producto Completado', 'Este producto ya ha sido escaneado completamente.')
-      } else {
-        showError('Error de Escaneo', err.response?.data?.message || 'Error al escanear producto')
       }
+      // Don't show other errors - local validation already succeeded
     } finally {
       setScanning(false)
     }
