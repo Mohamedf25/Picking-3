@@ -28,19 +28,45 @@ function StoreConfig({ onConnected }: StoreConfigProps) {
   const [qrScannerOpen, setQrScannerOpen] = useState(false)
 
   useEffect(() => {
+    // First, check URL parameters (from QR code scan with native camera)
+    const urlParams = new URLSearchParams(window.location.search)
+    const urlApiKey = urlParams.get('apiKey')
+    const urlStore = urlParams.get('store')
+    
+    if (urlApiKey) {
+      setApiKey(urlApiKey)
+      // Store in localStorage for persistence
+      localStorage.setItem('api_key', urlApiKey)
+      // Remove URL params for security (hide API key from URL bar)
+      window.history.replaceState({}, '', window.location.pathname)
+      setSuccess('API Key cargado automaticamente. Ingresa la URL de tu tienda y tu nombre.')
+    }
+    
+    if (urlStore) {
+      setStoreUrl(urlStore)
+      localStorage.setItem('store_url', urlStore)
+    }
+    
+    // Then load any saved values from localStorage (if not already set from URL)
     const savedUrl = localStorage.getItem('store_url')
     const savedKey = localStorage.getItem('api_key')
     const savedName = localStorage.getItem('picker_name')
-    if (savedUrl) setStoreUrl(savedUrl)
-    if (savedKey) setApiKey(savedKey)
+    if (savedUrl && !urlStore) setStoreUrl(savedUrl)
+    if (savedKey && !urlApiKey) setApiKey(savedKey)
     if (savedName) setPickerName(savedName)
   }, [])
+
+  // UTF-8 safe base64 decode function
+  const base64DecodeUtf8 = (str: string): string => {
+    return decodeURIComponent(escape(atob(str)))
+  }
 
   // Handle QR code scan - parse the base64 encoded JSON and auto-fill fields
   const handleQrScan = (scannedData: string) => {
     try {
       // The QR code contains base64 encoded JSON with store_url, api_key, store_name, rest_url
-      const decodedData = JSON.parse(atob(scannedData))
+      // Use UTF-8 safe decoder to handle special characters (accents, ñ, etc.)
+      const decodedData = JSON.parse(base64DecodeUtf8(scannedData))
       
       if (decodedData.store_url) {
         setStoreUrl(decodedData.store_url)

@@ -39,18 +39,18 @@ class Picking_Admin {
         );
         
         wp_enqueue_script(
-            'picking-admin-js',
-            PICKING_PLUGIN_URL . 'admin/js/admin.js',
-            array('jquery'),
+            'qrcode-js',
+            PICKING_PLUGIN_URL . 'admin/js/qrcode.min.js',
+            array(),
             PICKING_VERSION,
             true
         );
         
         wp_enqueue_script(
-            'qrcode-js',
-            'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js',
-            array(),
-            '1.5.3',
+            'picking-admin-js',
+            PICKING_PLUGIN_URL . 'admin/js/admin.js',
+            array('jquery', 'qrcode-js'),
+            PICKING_VERSION,
             true
         );
         
@@ -60,6 +60,7 @@ class Picking_Admin {
             'siteUrl' => get_site_url(),
             'restUrl' => get_rest_url(),
             'apiKey' => get_option('picking_api_key', ''),
+            'appUrl' => get_option('picking_app_url', ''),
             'strings' => array(
                 'generating' => __('Generando...', 'picking-connector'),
                 'testing' => __('Probando...', 'picking-connector'),

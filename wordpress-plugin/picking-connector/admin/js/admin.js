@@ -471,18 +471,28 @@
         },
 
         updateQRCode: function(apiKey) {
-            var connectionData = {
-                store_url: pickingAdmin.siteUrl,
-                api_key: apiKey,
-                store_name: document.title.split(' - ')[0] || 'Store',
-                rest_url: pickingAdmin.restUrl + 'picking/v1'
-            };
+            var appUrl = pickingAdmin.appUrl;
             
-            var connectionString = btoa(JSON.stringify(connectionData));
+            if (!appUrl) {
+                var canvas = document.getElementById('qr-code');
+                if (canvas) {
+                    var ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.font = '14px Arial';
+                    ctx.fillStyle = '#666';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Configura la URL de la App', canvas.width / 2, canvas.height / 2 - 10);
+                    ctx.fillText('en Configuracion', canvas.width / 2, canvas.height / 2 + 10);
+                }
+                return;
+            }
+            
+            var separator = appUrl.indexOf('?') === -1 ? '?' : '&';
+            var qrUrl = appUrl + separator + 'apiKey=' + encodeURIComponent(apiKey) + '&store=' + encodeURIComponent(pickingAdmin.siteUrl);
             
             var canvas = document.getElementById('qr-code');
             if (canvas && typeof QRCode !== 'undefined') {
-                QRCode.toCanvas(canvas, connectionString, {
+                QRCode.toCanvas(canvas, qrUrl, {
                     width: 256,
                     margin: 2,
                     color: {
