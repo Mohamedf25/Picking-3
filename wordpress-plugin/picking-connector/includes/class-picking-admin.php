@@ -60,6 +60,7 @@ class Picking_Admin {
             'siteUrl' => get_site_url(),
             'restUrl' => get_rest_url(),
             'apiKey' => get_option('picking_api_key', ''),
+            'appUrl' => get_option('picking_app_url', ''),
             'strings' => array(
                 'generating' => __('Generando...', 'picking-connector'),
                 'testing' => __('Probando...', 'picking-connector'),

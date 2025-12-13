@@ -28,11 +28,31 @@ function StoreConfig({ onConnected }: StoreConfigProps) {
   const [qrScannerOpen, setQrScannerOpen] = useState(false)
 
   useEffect(() => {
+    // First, check URL parameters (from QR code scan with native camera)
+    const urlParams = new URLSearchParams(window.location.search)
+    const urlApiKey = urlParams.get('apiKey')
+    const urlStore = urlParams.get('store')
+    
+    if (urlApiKey) {
+      setApiKey(urlApiKey)
+      // Store in localStorage for persistence
+      localStorage.setItem('api_key', urlApiKey)
+      // Remove URL params for security (hide API key from URL bar)
+      window.history.replaceState({}, '', window.location.pathname)
+      setSuccess('API Key cargado automaticamente. Ingresa la URL de tu tienda y tu nombre.')
+    }
+    
+    if (urlStore) {
+      setStoreUrl(urlStore)
+      localStorage.setItem('store_url', urlStore)
+    }
+    
+    // Then load any saved values from localStorage (if not already set from URL)
     const savedUrl = localStorage.getItem('store_url')
     const savedKey = localStorage.getItem('api_key')
     const savedName = localStorage.getItem('picker_name')
-    if (savedUrl) setStoreUrl(savedUrl)
-    if (savedKey) setApiKey(savedKey)
+    if (savedUrl && !urlStore) setStoreUrl(savedUrl)
+    if (savedKey && !urlApiKey) setApiKey(savedKey)
     if (savedName) setPickerName(savedName)
   }, [])
 
