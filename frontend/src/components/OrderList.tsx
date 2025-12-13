@@ -31,6 +31,13 @@ import {
   Engineering,
 } from '@mui/icons-material'
 
+interface LastPickingEvent {
+  action: string
+  user: string
+  timestamp: string
+  reason: string
+}
+
 interface Order {
   order_id: number
   order_number: string
@@ -42,6 +49,7 @@ interface Order {
   user_claimed: string
   date_created: string
   payment_method: string
+  last_picking_event?: LastPickingEvent | null
 }
 
 type PickingMode = 'single' | 'batch'
@@ -107,6 +115,23 @@ function OrderList() {
       default:
         return status
     }
+  }
+
+  const getActionText = (action: string) => {
+    switch (action) {
+      case 'entered': return 'Entro'
+      case 'exited': return 'Salio'
+      case 'continued': return 'Continuo'
+      case 'reentered': return 'Reingreso'
+      case 'completed': return 'Completo'
+      default: return action
+    }
+  }
+
+  const formatEventTime = (timestamp: string) => {
+    if (!timestamp) return ''
+    const date = new Date(timestamp)
+    return date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
   }
 
   const handleModeChange = (_event: React.MouseEvent<HTMLElement>, newMode: PickingMode | null) => {
@@ -307,6 +332,13 @@ function OrderList() {
                             <Engineering sx={{ fontSize: 16, mr: 1, color: 'warning.main' }} />
                             <Typography variant="body2" color="warning.main" sx={{ fontWeight: 500 }}>
                               En picking: {order.user_claimed}
+                            </Typography>
+                          </Box>
+                        )}
+                        {order.last_picking_event && order.last_picking_event.action && (
+                          <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
+                            <Typography variant="caption" color="text.secondary">
+                              Ultima actividad: {order.last_picking_event.user} {getActionText(order.last_picking_event.action)} {formatEventTime(order.last_picking_event.timestamp)}
                             </Typography>
                           </Box>
                         )}

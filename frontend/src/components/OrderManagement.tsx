@@ -123,6 +123,11 @@ interface TabPanelProps {
   value: number
 }
 
+interface WooStatus {
+  value: string
+  label: string
+}
+
 function TabPanel(props: TabPanelProps) {
   const { children, value, index, ...other } = props
   return (
@@ -141,6 +146,7 @@ function OrderManagement() {
   const [statusFilter, setStatusFilter] = useState('')
   const [pickingStatusFilter, setPickingStatusFilter] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
+  const [wooStatuses, setWooStatuses] = useState<WooStatus[]>([])
   
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [orderHistory, setOrderHistory] = useState<OrderHistory | null>(null)
@@ -156,8 +162,25 @@ function OrderManagement() {
   const apiKey = localStorage.getItem('api_key') || ''
 
   useEffect(() => {
+    fetchWooStatuses()
+  }, [])
+
+  useEffect(() => {
     fetchOrders()
   }, [page, statusFilter, pickingStatusFilter])
+
+  const fetchWooStatuses = async () => {
+    try {
+      const response = await axios.get(`${storeUrl}/wp-json/picking/v1/order-statuses`, {
+        params: { token: apiKey }
+      })
+      if (response.data.success) {
+        setWooStatuses(response.data.statuses || [])
+      }
+    } catch (err) {
+      console.error('Error fetching WooCommerce statuses:', err)
+    }
+  }
 
   const fetchOrders = async () => {
     try {
@@ -169,6 +192,7 @@ function OrderManagement() {
       }
       if (statusFilter) params.status = statusFilter
       if (pickingStatusFilter) params.picking_status = pickingStatusFilter
+      if (searchQuery) params.search = searchQuery
 
       const response = await axios.get(`${storeUrl}/wp-json/picking/v1/get-all-orders`, { params })
 
@@ -261,6 +285,10 @@ function OrderManagement() {
     switch (eventType) {
       case 'picking_started': return 'Picking Iniciado'
       case 'picking_completed': return 'Picking Completado'
+      case 'picking_entered': return 'Usuario Entro al Picking'
+      case 'picking_exited': return 'Usuario Salio del Picking'
+      case 'picking_continued': return 'Usuario Continuo Picking'
+      case 'picking_reentered': return 'Usuario Reingreso al Picking'
       case 'item_added': return 'Producto Agregado'
       case 'item_removed': return 'Producto Retirado'
       case 'quantity_changed': return 'Cantidad Modificada'
@@ -316,13 +344,17 @@ function OrderManagement() {
                 <Select
                   value={statusFilter}
                   label="Estado WooCommerce"
-                  onChange={(e) => setStatusFilter(e.target.value)}
+                  onChange={(e) => {
+                    setStatusFilter(e.target.value)
+                    setPage(1)
+                  }}
                 >
                   <MenuItem value="">Todos</MenuItem>
-                  <MenuItem value="wc-processing">Procesando</MenuItem>
-                  <MenuItem value="wc-completed">Completado</MenuItem>
-                  <MenuItem value="wc-on-hold">En espera</MenuItem>
-                  <MenuItem value="wc-pending">Pendiente pago</MenuItem>
+                  {wooStatuses.map((status) => (
+                    <MenuItem key={status.value} value={status.value}>
+                      {status.label}
+                    </MenuItem>
+                  ))}
                 </Select>
               </FormControl>
             </Grid>
@@ -332,7 +364,10 @@ function OrderManagement() {
                 <Select
                   value={pickingStatusFilter}
                   label="Estado Picking"
-                  onChange={(e) => setPickingStatusFilter(e.target.value)}
+                  onChange={(e) => {
+                    setPickingStatusFilter(e.target.value)
+                    setPage(1)
+                  }}
                 >
                   <MenuItem value="">Todos</MenuItem>
                   <MenuItem value="pending">Pendiente</MenuItem>
