@@ -111,6 +111,12 @@ class Picking_API {
             'permission_callback' => '__return_true',
         ));
         
+        register_rest_route($namespace, '/start-picking', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'start_picking'),
+            'permission_callback' => '__return_true',
+        ));
+        
         register_rest_route($namespace, '/upload-photo', array(
             'methods' => 'POST',
             'callback' => array($this, 'upload_photo'),
@@ -779,6 +785,7 @@ class Picking_API {
         
         $order_id = $request->get_param('order_id');
         $appuser = $request->get_param('appuser');
+        $view_only = $request->get_param('view_only') === 'true' || $request->get_param('view_only') === '1';
         
         if (empty($order_id)) {
             return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
@@ -793,57 +800,60 @@ class Picking_API {
         $user_claimed = $order->get_meta('user_claimed');
         $picking_status = $order->get_meta('picking_status');
         
-        // Check if order is claimed by another user who is still actively working
-        // Allow same user to re-enter, and allow others if order was released (no user_claimed)
-        if (!empty($user_claimed) && $user_claimed !== $appuser) {
-            return new WP_Error('order_claimed', sprintf(__('Pedido reclamado por %s.', 'picking-connector'), $user_claimed), array('status' => 403));
-        }
-        
-        // Determine if this is a new entry, re-entry by same user, or continuation by another user
-        $is_new_entry = empty($user_claimed);
-        $is_reentry = !empty($user_claimed) && $user_claimed === $appuser;
-        $is_continuation = !empty($picking_status) && $picking_status === 'picking' && $is_new_entry;
-        
-        if (!empty($appuser)) {
-            if ($is_new_entry) {
-                // First time claiming this order or continuing after previous user exited
-                $order->update_meta_data('user_claimed', $appuser);
-                $order->update_meta_data('picking_status', 'picking');
-                $order->update_meta_data('picking_started_at', current_time('mysql'));
-                
-                // Only set picking_started_by if this is truly the first time
-                $original_starter = $order->get_meta('picking_started_by');
-                if (empty($original_starter)) {
-                    $order->update_meta_data('picking_started_by', $appuser);
-                }
-                
-                // Change WooCommerce order status if configured
-                $started_status = get_option('picking_started_status', '');
-                if (!empty($started_status)) {
-                    $order->set_status(str_replace('wc-', '', $started_status), __('Picking iniciado por ', 'picking-connector') . $appuser);
-                }
-                
-                $order->save();
-                
-                // Record history event
-                if ($is_continuation) {
-                    $this->record_picking_history($order, 'continued', $appuser, '', array(
-                        'previous_status' => $picking_status,
-                    ));
-                } else {
-                    $this->record_picking_history($order, 'entered', $appuser);
-                }
-            } else if ($is_reentry) {
-                // Same user re-entering - just update the claim time
-                $order->update_meta_data('user_claimed', $appuser);
-                $order->save();
-                
-                // Record re-entry in history
-                $this->record_picking_history($order, 'reentered', $appuser);
+        // In view_only mode, skip all claiming logic - just return order data for viewing
+        if (!$view_only) {
+            // Check if order is claimed by another user who is still actively working
+            // Allow same user to re-enter, and allow others if order was released (no user_claimed)
+            if (!empty($user_claimed) && $user_claimed !== $appuser) {
+                return new WP_Error('order_claimed', sprintf(__('Pedido reclamado por %s.', 'picking-connector'), $user_claimed), array('status' => 403));
             }
             
-            // Record this user as having worked on the order
-            $this->record_picking_user($order, $appuser);
+            // Determine if this is a new entry, re-entry by same user, or continuation by another user
+            $is_new_entry = empty($user_claimed);
+            $is_reentry = !empty($user_claimed) && $user_claimed === $appuser;
+            $is_continuation = !empty($picking_status) && $picking_status === 'picking' && $is_new_entry;
+            
+            if (!empty($appuser)) {
+                if ($is_new_entry) {
+                    // First time claiming this order or continuing after previous user exited
+                    $order->update_meta_data('user_claimed', $appuser);
+                    $order->update_meta_data('picking_status', 'picking');
+                    $order->update_meta_data('picking_started_at', current_time('mysql'));
+                    
+                    // Only set picking_started_by if this is truly the first time
+                    $original_starter = $order->get_meta('picking_started_by');
+                    if (empty($original_starter)) {
+                        $order->update_meta_data('picking_started_by', $appuser);
+                    }
+                    
+                    // Change WooCommerce order status if configured
+                    $started_status = get_option('picking_started_status', '');
+                    if (!empty($started_status)) {
+                        $order->set_status(str_replace('wc-', '', $started_status), __('Picking iniciado por ', 'picking-connector') . $appuser);
+                    }
+                    
+                    $order->save();
+                    
+                    // Record history event
+                    if ($is_continuation) {
+                        $this->record_picking_history($order, 'continued', $appuser, '', array(
+                            'previous_status' => $picking_status,
+                        ));
+                    } else {
+                        $this->record_picking_history($order, 'entered', $appuser);
+                    }
+                } else if ($is_reentry) {
+                    // Same user re-entering - just update the claim time
+                    $order->update_meta_data('user_claimed', $appuser);
+                    $order->save();
+                    
+                    // Record re-entry in history
+                    $this->record_picking_history($order, 'reentered', $appuser);
+                }
+                
+                // Record this user as having worked on the order
+                $this->record_picking_user($order, $appuser);
+            }
         }
         
         $products = array();
@@ -986,6 +996,105 @@ class Picking_API {
             'total' => $order->get_total(),
             'currency' => $order->get_currency(),
             'notes' => $order->get_customer_note(),
+        );
+    }
+    
+    /**
+     * Start a picking session for an order.
+     * This endpoint explicitly claims the order and starts the picking process.
+     * Should be called when user clicks "Iniciar Picking" button.
+     */
+    public function start_picking($request) {
+        if (!$this->validate_token($request)) {
+            return $this->unauthorized_response();
+        }
+        
+        // Validate user is active
+        $user_check = $this->check_user_active($request);
+        if (is_wp_error($user_check)) {
+            return $user_check;
+        }
+        
+        $body = $request->get_body();
+        $data = json_decode($body, true);
+        
+        $order_id = isset($data['order_id']) ? $data['order_id'] : $request->get_param('order_id');
+        $appuser = isset($data['appuser']) ? $data['appuser'] : $request->get_param('appuser');
+        
+        if (empty($order_id)) {
+            return new WP_Error('missing_order_id', __('ID de pedido requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        if (empty($appuser)) {
+            return new WP_Error('missing_appuser', __('Usuario requerido.', 'picking-connector'), array('status' => 400));
+        }
+        
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return new WP_Error('order_not_found', __('Pedido no encontrado.', 'picking-connector'), array('status' => 404));
+        }
+        
+        $user_claimed = $order->get_meta('user_claimed');
+        $picking_status = $order->get_meta('picking_status');
+        
+        // Check if order is claimed by another user who is still actively working
+        if (!empty($user_claimed) && $user_claimed !== $appuser) {
+            return new WP_Error('order_claimed', sprintf(__('Pedido reclamado por %s.', 'picking-connector'), $user_claimed), array('status' => 403));
+        }
+        
+        // Determine if this is a new entry, re-entry by same user, or continuation by another user
+        $is_new_entry = empty($user_claimed);
+        $is_reentry = !empty($user_claimed) && $user_claimed === $appuser;
+        $is_continuation = !empty($picking_status) && $picking_status === 'picking' && $is_new_entry;
+        
+        if ($is_new_entry) {
+            // First time claiming this order or continuing after previous user exited
+            $order->update_meta_data('user_claimed', $appuser);
+            $order->update_meta_data('picking_status', 'picking');
+            $order->update_meta_data('picking_started_at', current_time('mysql'));
+            
+            // Only set picking_started_by if this is truly the first time
+            $original_starter = $order->get_meta('picking_started_by');
+            if (empty($original_starter)) {
+                $order->update_meta_data('picking_started_by', $appuser);
+            }
+            
+            // Change WooCommerce order status if configured
+            $started_status = get_option('picking_started_status', '');
+            if (!empty($started_status)) {
+                $order->set_status(str_replace('wc-', '', $started_status), __('Picking iniciado por ', 'picking-connector') . $appuser);
+            }
+            
+            $order->save();
+            
+            // Record history event
+            if ($is_continuation) {
+                $this->record_picking_history($order, 'continued', $appuser, '', array(
+                    'previous_status' => $picking_status,
+                ));
+            } else {
+                $this->record_picking_history($order, 'entered', $appuser);
+            }
+        } else if ($is_reentry) {
+            // Same user re-entering - just update the claim time
+            $order->update_meta_data('user_claimed', $appuser);
+            $order->save();
+            
+            // Record re-entry in history
+            $this->record_picking_history($order, 'reentered', $appuser);
+        }
+        
+        // Record this user as having worked on the order
+        $this->record_picking_user($order, $appuser);
+        
+        return array(
+            'success' => true,
+            'message' => __('Picking iniciado correctamente.', 'picking-connector'),
+            'order_id' => $order->get_id(),
+            'user_claimed' => $appuser,
+            'picking_status' => 'picking',
+            'picking_started_at' => $order->get_meta('picking_started_at'),
         );
     }
     
