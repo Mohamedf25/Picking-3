@@ -39,18 +39,18 @@ class Picking_Admin {
         );
         
         wp_enqueue_script(
-            'picking-admin-js',
-            PICKING_PLUGIN_URL . 'admin/js/admin.js',
-            array('jquery'),
-            PICKING_VERSION,
+            'qrcode-js',
+            'https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js',
+            array(),
+            '1.5.1',
             true
         );
         
         wp_enqueue_script(
-            'qrcode-js',
-            'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js',
-            array(),
-            '1.5.3',
+            'picking-admin-js',
+            PICKING_PLUGIN_URL . 'admin/js/admin.js',
+            array('jquery', 'qrcode-js'),
+            PICKING_VERSION,
             true
         );
         
