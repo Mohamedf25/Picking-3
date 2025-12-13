@@ -2145,40 +2145,13 @@ class Picking_API {
                 continue;
             }
             
-            // Get product ID and parent ID for variations
-            $product_id = $product->get_id();
-            $parent_id = 0;
-            if ($product->is_type('variation')) {
-                $parent_id = $product->get_parent_id();
-            }
-            
             // Check barcode fields FIRST (EAN, GTIN, CND, etc.) - case-insensitive
-            // Use get_post_meta() for better compatibility with third-party plugins
-            // Expanded list to match get_product_barcodes() function
-            $barcode_meta_keys = array(
-                '_alg_ean', '_ean', 'ean', '_wpm_gtin_code', '_global_unique_id',
-                '_barcode', 'barcode', '_wpla_ean', '_sku_ean',
-                '_gtin', 'gtin', '_alg_gtin',
-                '_cnd', 'cnd', '_codigo_nacional', 'codigo_nacional'
-            );
-            
-            // Check variation first, then parent product
+            $barcode_meta_keys = array('_alg_ean', '_ean', '_gtin', '_barcode', 'ean', 'gtin', 'barcode', '_cnd', 'cnd', '_codigo_nacional', 'codigo_nacional');
             foreach ($barcode_meta_keys as $meta_key) {
-                $product_barcode = trim((string) get_post_meta($product_id, $meta_key, true));
+                $product_barcode = trim((string) $product->get_meta($meta_key));
                 if ($product_barcode !== '' && strcasecmp($product_barcode, $code) === 0) {
                     $product_found = true;
                     break;
-                }
-            }
-            
-            // If variation and not found, check parent product
-            if (!$product_found && $parent_id > 0) {
-                foreach ($barcode_meta_keys as $meta_key) {
-                    $product_barcode = trim((string) get_post_meta($parent_id, $meta_key, true));
-                    if ($product_barcode !== '' && strcasecmp($product_barcode, $code) === 0) {
-                        $product_found = true;
-                        break;
-                    }
                 }
             }
             
